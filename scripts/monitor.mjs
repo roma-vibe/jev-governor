@@ -227,8 +227,8 @@ function stepsOf(lines, { sidechain }) {
 }
 
 /** API-equivalent dollars of one request at list prices (`subagent`: cache writes at the 5-minute price unless the transcript says 1h). */
-function stepCost(step, subagent) {
-  const p = PRICES[familyOf(step.model ?? '') ?? 'opus'];
+function stepCost(step, subagent, family) {
+  const p = PRICES[family ?? familyOf(step.model ?? '') ?? 'opus'];
   const w1h = step.write1h ?? (subagent ? 0 : step.cacheWrite);
   const w5m = Math.max(0, step.cacheWrite - w1h);
   return (step.input * p.input + step.output * p.output + step.cacheRead * p.cacheRead + w1h * p.write1h + w5m * p.write5m) / 1e6;
@@ -302,6 +302,27 @@ async function loadTranscripts() {
  * the one the mod set (`source` env and `tokens` equal to it), and how the compactions in
  * subagents went, applied or fallen back to the summary.
  */
+/**
+ * Subagents that qualified for the light model (`light` on the `subagent` entry): how many ran on it
+ * (`lightApplied`), how many moved up (`light-up`), and what the qualifying ones would cost on Haiku
+ * against what they cost, by their transcripts.
+ */
+function lightLine(subagents, movedUp, subRuns, mode) {
+  const light = subagents.filter((e) => e.light);
+  if (light.length === 0) return `Лёгкая модель для субагентов (${mode}): подходящих задач не было.`;
+  const ids = new Set(light.map((e) => e.agentId).filter(Boolean));
+  const runs = subRuns.filter((r) => [...ids].some((id) => r.id.endsWith(id)));
+  const actual = runs.reduce((a, r) => a + r.steps.reduce((x, st) => x + stepCost(st, true), 0), 0);
+  const onHaiku = runs.reduce((a, r) => a + r.steps.reduce((x, st) => x + stepCost(st, true, 'haiku'), 0), 0);
+  const applied = light.filter((e) => e.lightApplied).length;
+  const steps = runs.flatMap((r) => r.steps.map((st) => (st.input ?? 0) + st.cacheRead + st.cacheWrite));
+  const maxCtx = steps.length ? Math.max(...steps) : 0;
+  return [
+    `Лёгкая модель для субагентов (${mode}): подходящих ${light.length}, запущено на ней ${applied}, переведено выше ${movedUp.length}.`,
+    runs.length ? ` Их стоимость по транскриптам $${actual.toFixed(2)}, на Haiku было бы ≈ $${onHaiku.toFixed(2)}${applied ? '' : ' (оценка по тем же токенам)'}; самый большой контекст ${k(maxCtx)}${maxCtx > 180_000 ? ' — выше окна Haiku, такие задачи ей не подходят' : ''}.` : '',
+  ].join('');
+}
+
 function windowLine(windows, compacts) {
   if (windows.length === 0) return 'Окно автосжатия: записей нет (мод до 0.2.6 или окно выключено).';
   const mod = windows.filter((e) => e.autoWindow?.by === 'mod');
@@ -439,6 +460,7 @@ async function main() {
       `Effort: ${[...efforts].sort().map(([e, xs]) => `${e} ${xs.length}`).join(', ') || '—'}.`,
       `Смен модели: ${switches.length}, из них на тёплом кэше: ${warm.length}; ваших /model и смен effort (override): ${overrides.length}; эскалаций после ошибок инструментов: ${escalated.length}.`,
       `Субагентов: ${subagents.length} в журнале из ${subRuns.length} в транскриптах (${[...group(subagents, (e) => familyName(e.model))].map(([m, xs]) => `${m} ${xs.length}`).join(', ') || '—'}).`,
+      lightLine(subagents, by('light-up'), subRuns, config.router.lightSubagents),
       ...overrides.slice(-5).map((e) => `- override: ${(e.reasons ?? []).join('; ')} · «${e.text ?? ''}»`),
     ]),
   );

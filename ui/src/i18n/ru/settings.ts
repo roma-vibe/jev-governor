@@ -94,6 +94,21 @@ export default {
   'Jev decides when each subagent is launched. A subagent has its own context, so the main chat cache does not suffer.':
     'Jev решает при запуске каждого субагента. У субагента свой контекст, поэтому кэш основного диалога не страдает.',
   'Opus threshold for a subagent': 'Порог Opus для субагента',
+  'Light model for reading subagents': 'Лёгкая модель для читающих субагентов',
+  'Shadow (only record what it would choose)': 'Наблюдение (только записывать, что выбрал бы)',
+  'On': 'Включена',
+  'Off': 'Выключена',
+  'Read-only subagents with an easy task (search, listing, reading files) can run on Haiku: its cache reads cost half as much, and reading is where subagents spend. It never applies to subagents that can edit, to risky tasks, or to ones that need reasoning. If the task grows (many steps) or tools keep failing, the subagent moves to the standard model.':
+    'Субагенты, которые только читают и получили простую задачу (поиск, список, чтение файлов), могут работать на Haiku: чтение кэша у него вдвое дешевле, а субагенты тратят именно на чтение. Не применяется к субагентам, которые могут править файлы, к рискованным задачам и к тем, где нужны рассуждения. Если задача разрастается (много шагов) или инструменты падают, субагент переходит на стандартную модель.',
+  'Light model: Opus probability below': 'Лёгкая модель: вероятность Opus ниже',
+  'A subagent goes to the light model only when the probability that it needs Opus is below this.':
+    'Субагент уходит на лёгкую модель, только если вероятность, что ему нужен Opus, ниже этого значения.',
+  'Light model: steps before moving up': 'Лёгкая модель: шагов до перехода выше',
+  'The light model has a smaller context window. After this many steps the subagent moves to the standard model.':
+    'У лёгкой модели окно контекста меньше. После этого числа шагов субагент переходит на стандартную модель.',
+  'Light model (Haiku)': 'Лёгкая модель (Haiku)',
+  'Model for read-only subagents with an easy task, when “Light model for reading subagents” is on. It has no effort setting.':
+    'Модель для читающих субагентов с простой задачей, когда включена «Лёгкая модель для читающих субагентов». Уровня усилия у неё нет.',
   'The probability that Opus is needed at which a subagent is launched on Opus. A lower threshold means more subagents on Opus (higher quality, more spending).':
     'Вероятность, что нужна Opus, при которой субагент запускается на Opus. Ниже порог — больше субагентов на Opus (качество выше, расход больше).',
   'Specialist agents': 'Агенты-специалисты',

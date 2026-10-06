@@ -30,7 +30,10 @@ export type GovernorConfig = {
     /** A decision that takes longer is abandoned and nothing changes. */
     timeoutMs: number;
   };
-  models: Record<Tier, string>;
+  models: Record<Tier, string> & {
+    /** The light model read-only subagents may run on (`router.lightSubagents`). */
+    light: string;
+  };
   router: {
     /** Choose the main conversation's model (only where the prompt cache allows). */
     mainModel: boolean;
@@ -46,6 +49,15 @@ export type GovernorConfig = {
     downgradeAt: number;
     /** P(strong) for a subagent to run on the strong tier. */
     subagentStrongAt: number;
+    /**
+     * Read-only subagents with an easy task on the light model (Haiku): its cache reads cost half of
+     * Sonnet's and Opus's. `shadow` only records what it would have chosen.
+     */
+    lightSubagents: 'off' | 'shadow' | 'on';
+    /** A subagent goes light only when P(strong) is below this. */
+    lightBelow: number;
+    /** A light subagent moves to the standard tier after this many steps (its window is smaller) or after failed tool calls. */
+    lightMaxSteps: number;
     /** Context below this many tokens makes a model switch cheap (for upgrades; downgrades weigh dollars). */
     cheapSwitchTokens: number;
     /** Turns a downgrade is expected to last: its per-turn gain times this must beat the cache re-write it costs. */
@@ -264,6 +276,7 @@ export type LedgerKind =
   | 'redacted'
   | 'rerun-after-prune'
   | 'override'
+  | 'light-up'
   | 'window'
   | 'error';
 
@@ -291,6 +304,9 @@ export type LedgerEntry = {
   continuation?: number;
   pressure?: number;
   reasons?: string[];
+  /** `subagent`: the task qualified for the light model; `lightApplied` says whether it ran there. */
+  light?: boolean;
+  lightApplied?: boolean;
   agent?: string;
   subagentType?: string;
   created?: boolean;

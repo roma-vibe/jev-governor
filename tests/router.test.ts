@@ -178,6 +178,25 @@ describe('decideSubagent', () => {
     expect(writer.tier).toBe('strong');
   });
 
+  it('sends an easy read-only subagent to the light model, but never a writer or a risky or harder task', () => {
+    const on = resolveConfig({ router: { lightSubagents: 'on' } });
+    const easy = signals({ pStrong: 0.05, effortExpected: 0 });
+    const explore = decideSubagent(easy, { pressure: 0, subagentType: 'Explore' }, on);
+    expect(explore).toMatchObject({ tier: 'standard', light: true });
+    expect(explore.reasons.join(' ')).toContain('light model (used)');
+    expect(decideSubagent(easy, { pressure: 0, subagentType: 'general-purpose', readOnly: true }, on).light).toBe(true);
+    // It can edit: reading is not all it does.
+    expect(decideSubagent(easy, { pressure: 0, subagentType: 'general-purpose' }, on).light).toBeUndefined();
+    // Opus may be needed, the task is risky, or it needs real thinking.
+    expect(decideSubagent(signals({ pStrong: 0.3 }), { pressure: 0, subagentType: 'Explore' }, on).light).toBeUndefined();
+    expect(decideSubagent(signals({ pStrong: 0.05, risky: 0.9 }), { pressure: 0, subagentType: 'Explore' }, on).light).toBeUndefined();
+    expect(decideSubagent(signals({ pStrong: 0.05, effortExpected: 3 }), { pressure: 0, subagentType: 'Explore' }, on).light).toBeUndefined();
+    // An agent that pins its tier keeps it; off never marks one.
+    expect(decideSubagent(easy, { pressure: 0, subagentType: 'Explore', pinnedTier: 'standard' }, on).light).toBeUndefined();
+    const off = resolveConfig({ router: { lightSubagents: 'off' } });
+    expect(decideSubagent(easy, { pressure: 0, subagentType: 'Explore' }, off).light).toBeUndefined();
+  });
+
   it('honours an agent pinned tier and effort', () => {
     const d = decideSubagent(
       signals({ pStrong: 0.0 }),

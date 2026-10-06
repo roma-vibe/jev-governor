@@ -98,6 +98,11 @@ decides per task.
 - `override` — the person disagreed with the router: a `/model` change
   (`model`, `prevModel`) or a change of the session's own effort (`effort`);
   `reasons` says which.
+- `subagent` also carries `light: true` when the task qualified for the light model
+  (read-only, P(strong) below `router.lightBelow`, effort medium or less) and
+  `lightApplied` (whether it ran there: `router.lightSubagents` `on` or `shadow`).
+- `light-up` — a light subagent moved to the standard model after
+  `router.lightMaxSteps` steps or failed tool calls (`reasons` says which).
 - `rerun-after-prune` — after a compaction the model ran a pruned command or
   read a pruned file again (`text` names the call). With `output-read` of
   `pruned/` files, the measure of how often pruned content is needed.
@@ -160,3 +165,9 @@ into input, output, cache reads and cache writes.
 - `handoff.suggestColdAtTokens` (300k) — suggest `/jevg fresh` when the cache
   of a context this large went cold.
 - `projects.enabled` — the whole project panel.
+- `router.lightSubagents` (`shadow` | `on` | `off`, default `shadow`), `router.lightBelow` (0.15),
+  `router.lightMaxSteps` (30), `models.light` (Haiku 4.5) — read-only subagents with an
+  easy task on the light model: its cache reads cost half of Sonnet's and Opus's, and reading
+  is where subagents spend. No effort is sent to it. In `shadow` the mod only records what it
+  would have chosen (`light`, `lightApplied: false`); `node scripts/monitor.mjs` prints what those
+  subagents would have cost on Haiku.

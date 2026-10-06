@@ -13,7 +13,7 @@ export const DEFAULT_CONFIG: GovernorConfig = {
     keyFile: '~/.claude/jev-governor/openrouter.key',
     timeoutMs: 2500,
   },
-  models: { standard: 'claude-sonnet-5-5', strong: 'claude-opus-5-5' },
+  models: { standard: 'claude-sonnet-5-5', strong: 'claude-opus-5-5', light: 'claude-haiku-4-5-20251001' },
   router: {
     mainModel: true,
     mainEffort: true,
@@ -22,6 +22,9 @@ export const DEFAULT_CONFIG: GovernorConfig = {
     forceUpgradeAt: 0.8,
     downgradeAt: 0.65,
     subagentStrongAt: 0.5,
+    lightSubagents: 'shadow',
+    lightBelow: 0.15,
+    lightMaxSteps: 30,
     cheapSwitchTokens: 30_000,
     expectedTurns: 4,
     standardMaxContextTokens: 180_000,
@@ -175,6 +178,7 @@ export function resolveConfig(raw: unknown): GovernorConfig {
     models: {
       standard: str(models.standard, d.models.standard),
       strong: str(models.strong, d.models.strong),
+      light: str(models.light, d.models.light),
     },
     router: {
       mainModel: bool(r.mainModel, d.router.mainModel),
@@ -184,6 +188,9 @@ export function resolveConfig(raw: unknown): GovernorConfig {
       forceUpgradeAt: num(r.forceUpgradeAt, d.router.forceUpgradeAt, 0, 1),
       downgradeAt: num(r.downgradeAt, d.router.downgradeAt, 0, 1),
       subagentStrongAt: num(r.subagentStrongAt, d.router.subagentStrongAt, 0, 1),
+      lightSubagents: r.lightSubagents === 'on' || r.lightSubagents === 'off' ? r.lightSubagents : 'shadow',
+      lightBelow: num(r.lightBelow, d.router.lightBelow, 0, 1),
+      lightMaxSteps: num(r.lightMaxSteps, d.router.lightMaxSteps, 1, 500),
       cheapSwitchTokens: num(r.cheapSwitchTokens, d.router.cheapSwitchTokens, 0, 2_000_000),
       expectedTurns: num(r.expectedTurns, d.router.expectedTurns, 1, 100),
       standardMaxContextTokens: num(

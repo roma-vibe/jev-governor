@@ -224,6 +224,8 @@ export type Decision = {
   keepEffort?: boolean;
   switched: boolean;
   reasons: string[];
+  /** A subagent that may run on the light model (read-only, easy task, medium effort or less). */
+  light?: boolean;
 };
 
 export type MainContext = {
@@ -359,6 +361,7 @@ export function decideSubagent(
   const effort = ctx.pinnedEffort ?? chooseEffort(signals, ctx.pressure, config, reasons);
   if (ctx.pinnedEffort) reasons.push('effort pinned by agent');
   let tier: Tier;
+  let light = false;
   if (ctx.pinnedTier) {
     tier = ctx.pinnedTier;
     reasons.push('tier pinned by agent');
@@ -368,11 +371,17 @@ export function decideSubagent(
     const readOnly = ctx.readOnly ?? SEARCH_TYPES.has(ctx.subagentType);
     const risky = signals.risky >= r.riskyAt && ctx.pressure < 3 && !readOnly;
     tier = risky || signals.pStrong >= bar ? 'strong' : 'standard';
+    // Reading is where the cost is (cache reads of a growing context), and the light model reads at half
+    // the price; it is for tasks that need no reasoning, so read-only with a low chance of needing Opus.
+    if (tier === 'standard' && readOnly && !risky && r.lightSubagents !== 'off' && signals.pStrong < r.lightBelow && effortIndex(effort) <= effortIndex('medium')) {
+      light = true;
+    }
     reasons.push(
       `P(opus)=${signals.pStrong.toFixed(2)} vs bar ${bar.toFixed(2)}${risky ? ', risky' : ''}${readOnly && signals.risky >= r.riskyAt ? ', risky but read-only' : ''}`,
     );
   }
-  return { tier, effort, switched: false, reasons };
+  if (light) reasons.push(`light model (${r.lightSubagents === 'on' ? 'used' : 'shadow'}): read-only, P(opus) < ${r.lightBelow}`);
+  return { tier, effort, switched: false, reasons, ...(light ? { light } : {}) };
 }
 
 /** Which tier a model id belongs to; undefined for models outside both tiers. */

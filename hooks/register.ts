@@ -699,7 +699,7 @@ async function planSpawn(
   return {
     rate: budget.rate,
     prompt,
-    model: decision && !keepModel ? cfg.models[decision.tier] : undefined,
+    model: decision && !keepModel ? (decision.light && cfg.router.lightSubagents === 'on' ? cfg.models.light : cfg.models[decision.tier]) : undefined,
     decision,
     agent,
     created,
@@ -1677,8 +1677,24 @@ export const register: Register = (on) => {
       sub.steps++;
       if (sub.baseEffort === undefined && typeof e.effort === 'string') sub.baseEffort = e.effort;
       const steps = S.cfg.router.escalateAfterErrors > 0 ? Math.floor(sub.errors / S.cfg.router.escalateAfterErrors) : 0;
+      if (sub.light) {
+        // The light model has no effort to send. Its window is smaller and it reasons less: a growing
+        // task or failing tools move it to the standard model (one cache rewrite, once).
+        if (sub.steps <= S.cfg.router.lightMaxSteps && steps === 0) return yield* next(e);
+        sub.light = false;
+        sub.tier = 'standard';
+        sub.model = S.cfg.models.standard;
+        await ledger($, {
+          kind: 'light-up',
+          scope: 'subagent',
+          agentId: e.agentId,
+          model: S.cfg.models.standard,
+          reasons: [steps > 0 ? 'light subagent: tool errors, moved to the standard model' : `light subagent: ${sub.steps} steps, moved to the standard model`],
+        });
+        return yield* next({ ...e, model: S.cfg.models.standard, effort: escalate(sub.effort, Math.min(2, steps), S.cfg) });
+      }
       if (steps > 0) sub.escalated = Math.max(sub.escalated ?? 0, Math.min(2, steps));
-      return yield* next({ ...e, effort: escalate(sub.effort, Math.min(2, steps), S.cfg) });
+      return yield* next({ ...e, ...(sub.model ? { model: sub.model } : {}), effort: escalate(sub.effort, Math.min(2, steps), S.cfg) });
     }
 
     const turn = S.turn;
@@ -1857,6 +1873,7 @@ export const register: Register = (on) => {
         risky: plan.signals?.risky,
         pressure: plan.pressure,
         reasons: [...(plan.decision?.reasons ?? []), `ran as ${result.model ?? e.parentModel}`],
+        ...(plan.decision?.light ? { light: true, lightApplied: false } : {}),
         jevMs: plan.jevMs,
         jevCost: plan.jevCost,
         applied: false,
@@ -1867,6 +1884,7 @@ export const register: Register = (on) => {
     const sub: SubState | undefined = plan.decision
       ? {
           tier: plan.decision.tier,
+          ...(plan.decision.light && S.cfg.router.lightSubagents === 'on' ? { light: true } : {}),
           effort: plan.decision.effort,
           agent: plan.agent?.name,
           errors: 0,
@@ -1907,6 +1925,7 @@ export const register: Register = (on) => {
       ],
       jevMs: plan.jevMs,
       jevCost: plan.jevCost,
+      ...(plan.decision?.light ? { light: true, lightApplied: sub?.light === true } : {}),
       applied: true,
       rate: plan.rate,
       baseModel: e.model ?? e.parentModel,

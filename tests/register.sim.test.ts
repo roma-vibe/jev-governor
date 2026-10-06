@@ -47,6 +47,8 @@ let jevFlaky = 0;
 let contextTokens = 412_000;
 /** Routing: the tier Jev leans to. */
 let jevTier: 'strong' | 'standard' = 'strong';
+/** Routing: the effort score Jev gives. */
+let jevEffortScore = 2;
 /** Compaction: drop whole calls too, not only their outputs. */
 let dropCalls = false;
 /** `/clear` ends the conversation; false: it returns and changes nothing. */
@@ -66,7 +68,7 @@ function jevReply(body: string): string {
           ? { choice: 'strong', confidence: 0.6, probabilities: { strong: 0.6, standard: 0.4 } }
           : { choice: 'standard', confidence: 0.95, probabilities: { strong: 0.05, standard: 0.95 } };
     else if (q.type === 'choice') answers[name] = { choice: 'none', confidence: 0.9, probabilities: { none: 0.9 } };
-    else if (q.type === 'score') answers[name] = { score: 2, confidence: 0.9, probabilities: { '2': 1 } };
+    else if (q.type === 'score') answers[name] = { score: jevEffortScore, confidence: 0.9, probabilities: { [String(jevEffortScore)]: 1 } };
     // Compaction: drop every candidate's output; handoff: some turns needed.
     else if (name.startsWith('result_')) answers[name] = { noul: 0.1 };
     else if (name.startsWith('call_')) answers[name] = { noul: dropCalls ? 0.1 : 0.9 };
@@ -760,6 +762,74 @@ describe('jev-governor hooks against a fake engine', () => {
     expect(effort).toBe('high');
     const ledger = [...files.entries()].filter(([p]) => p.endsWith('spawn-session.jsonl')).map(([, t]) => t).join('');
     expect(ledger).toContain('wait note added');
+  });
+
+  it('an easy read-only subagent runs on the light model when that is on, only records it in shadow, and moves up when the task grows', async () => {
+    const config = JSON.parse(files.get(`${DATA}/config.json`) ?? '{}');
+    config.router = { ...config.router };
+    config.router.lightSubagents = 'on';
+    config.router.lightMaxSteps = 3;
+    files.set(`${DATA}/config.json`, JSON.stringify(config));
+    await startSession('light-session');
+    jevTier = 'standard';
+    jevEffortScore = 1;
+    const ledgerOf = (id: string): Record<string, any>[] =>
+      [...files.entries()].filter(([p]) => p.endsWith(`${id}.jsonl`)).flatMap(([, t]) => t.split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+    const step = async (agentId: string): Promise<{ model: string; effort: unknown }> => {
+      let seen = { model: '', effort: undefined as unknown };
+      const it = handlers.get('turn.step')![0]!($, { turnId: 't-light', agentId, model: 'claude-haiku-4-5-20251001', effort: 'xhigh' }, async function* (x: any) {
+        seen = { model: x.model, effort: x.effort };
+        yield x;
+      });
+      for await (const _ of it as AsyncIterable<unknown>) {
+        // drain
+      }
+      return seen;
+    };
+    try {
+      let spawned: any;
+      await emit(
+        'agent.spawn',
+        { subagentType: 'Explore', description: 'Find the config files', prompt: 'List where the config is read.', parentModel: 'claude-opus-5-5' },
+        async (x: any) => {
+          spawned = x;
+          return { agentId: 'light-1', model: x.model ?? x.parentModel };
+        },
+      );
+      expect(spawned.model).toBe('claude-haiku-4-5-20251001');
+      // The light model has no effort: the engine's own is left alone, then the task grows.
+      expect((await step('light-1')).effort).toBe('xhigh');
+      await step('light-1');
+      await step('light-1');
+      const up = await step('light-1');
+      expect(up.model).toBe('claude-sonnet-5-5');
+      expect(up.effort).not.toBe('xhigh');
+      const entries = ledgerOf('light-session');
+      expect(entries.find((e) => e.kind === 'subagent')).toMatchObject({ light: true, lightApplied: true, model: 'claude-haiku-4-5-20251001' });
+      expect(entries.find((e) => e.kind === 'light-up')?.reasons.join(' ')).toContain('moved to the standard model');
+      expect((await step('light-1')).model).toBe('claude-sonnet-5-5');
+
+      // Shadow: the same task is only recorded; nothing changes.
+      const shadow = JSON.parse(files.get(`${DATA}/config.json`)!);
+      shadow.router.lightSubagents = 'shadow';
+      files.set(`${DATA}/config.json`, JSON.stringify(shadow));
+      await emit('command.run', { command: 'jevg', args: 'reload' }, async () => ({ text: '' }));
+      let seenShadow: any;
+      await emit(
+        'agent.spawn',
+        { subagentType: 'Explore', description: 'Find the test files', prompt: 'List where the tests are.', parentModel: 'claude-opus-5-5' },
+        async (x: any) => {
+          seenShadow = x;
+          return { agentId: 'light-2', model: x.model ?? x.parentModel };
+        },
+      );
+      expect(seenShadow.model).toBe('claude-sonnet-5-5');
+      const recorded = ledgerOf('light-session').filter((e) => e.kind === 'subagent').at(-1)!;
+      expect(recorded).toMatchObject({ light: true, lightApplied: false });
+    } finally {
+      jevTier = 'strong';
+      jevEffortScore = 2;
+    }
   });
 
   it('a file dump is not a build run, a long listing is shortened, a trim that saves little keeps the output', async () => {

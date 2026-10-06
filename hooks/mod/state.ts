@@ -72,6 +72,10 @@ export type TurnState = {
 
 export type SubState = {
   tier: Tier;
+  /** Running on the light model: no effort is sent (it has none), and it moves up when the task grows. */
+  light?: boolean;
+  /** The model every step runs on after a light subagent moved up (the engine keeps asking for the spawn's). */
+  model?: string;
   effort: Effort;
   agent?: string;
   errors: number;

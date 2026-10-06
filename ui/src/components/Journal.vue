@@ -20,6 +20,7 @@ const kinds = computed<{ value: LedgerKind | ''; label: string }[]>(() => [
   { value: 'handoff', label: t('handoff: context handoff to a new chat') },
   { value: 'hint', label: t('hint: new chat hints') },
   { value: 'override', label: t('override: your /model and effort changes') },
+  { value: 'light-up', label: t('light-up: a light subagent moved to the standard model') },
   { value: 'rerun-after-prune', label: t('rerun-after-prune: rerun of what compaction removed') },
   { value: 'redacted', label: t('redacted: secrets removed from requests to Jev') },
   { value: 'window', label: t('window: auto-compaction window per session') },
@@ -239,6 +240,8 @@ function details(e: LedgerEntry): string {
         : '';
     case 'hint':
       return [e.newTopic !== undefined ? t('P(new task) {value}', { value: fmtP(e.newTopic) }) : '', reasons(e)].filter(Boolean).join(' · ');
+    case 'light-up':
+      return reasons(e);
     case 'rerun-after-prune':
       return t('rerun after compaction: {text}', { text: e.text ?? '' });
     case 'redacted':
@@ -274,6 +277,7 @@ const kindBadge: Record<string, string> = {
   handoff: 'badge-indigo',
   hint: 'badge-amber',
   redacted: 'badge-gray',
+  'light-up': 'badge-amber',
   'rerun-after-prune': 'badge-amber',
   override: 'badge-indigo',
   window: 'badge-gray',
