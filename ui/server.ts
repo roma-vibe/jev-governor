@@ -24,7 +24,7 @@ import type { AgentRecord, DraftRecord, GovernorConfig, LedgerEntry, SkillRecord
 import { pricable } from './lib/pricable.ts';
 import { createProjects, entriesOfProject } from './lib/projects.ts';
 
-const VERSION = '0.2.8';
+const VERSION = '0.2.9';
 const UI_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(UI_DIR);
 const DIST = path.join(UI_DIR, 'dist');

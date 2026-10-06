@@ -62,7 +62,7 @@ export const DEFAULT_CONFIG: GovernorConfig = {
     truncateHeadChars: 300,
     maxStateTokens: 25_000,
     maxRequestTokens: 30_000,
-    onReturn: true,
+    onReturn: false,
     onReturnMinTokens: 60_000,
     onReturnMinReduction: 0.15,
     archive: true,
@@ -78,7 +78,7 @@ export const DEFAULT_CONFIG: GovernorConfig = {
     useJev: true,
     suggestAtTokens: 150_000,
     suggestAt: 0.8,
-    // Off: after a pause the mod compacts first (compaction.onReturn); on 2026-10-06 none of the hints was taken.
+    // Off: nobody asked for it (and compaction after a pause is off by default, compaction.onReturn); on 2026-10-06 none of the hints was taken.
     suggestColdAtTokens: 0,
     keepDays: 30,
   },
