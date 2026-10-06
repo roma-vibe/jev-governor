@@ -104,7 +104,7 @@ export const DEFAULT_CONFIG: GovernorConfig = {
     describeWithClaude: true,
     showWorktrees: false,
   },
-  ui: { port: 4777, language: 'en', showStatus: true, nodePath: 'node', terminal: 'Terminal' },
+  ui: { port: 4777, language: 'auto', showStatus: true, nodePath: 'node', terminal: 'Terminal' },
   savings: { effortFactor: 0.3, defaultBaseModel: 'claude-opus-5-5', defaultBaseEffort: 'xhigh' },
   codex: { enabled: false },
 };
@@ -284,7 +284,7 @@ export function resolveConfig(raw: unknown): GovernorConfig {
     ui: {
       terminal: 'Terminal',
       port: num(ui.port, d.ui.port, 1024, 65_535),
-      language: ui.language === 'ru' ? 'ru' : 'en',
+      language: ui.language === 'ru' || ui.language === 'en' ? ui.language : 'auto',
       showStatus: bool(ui.showStatus, d.ui.showStatus),
       nodePath: str(ui.nodePath, d.ui.nodePath),
     },

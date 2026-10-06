@@ -13,7 +13,7 @@ export const store = reactive<{ config: GovernorConfig | null; key: KeyStatus | 
 watch(
   () => store.config?.ui.language,
   (language) => {
-    if (language) setLang(language);
+    if (language) setLang(language === 'auto' ? (navigator.language.toLowerCase().startsWith('ru') ? 'ru' : 'en') : language);
   },
   { flush: 'sync' },
 );

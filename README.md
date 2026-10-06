@@ -65,6 +65,8 @@ Mods run with your permissions and are not sandboxed: read the code before you e
 - `/jevg getctx [--brief|--nobrief] [focus]`: a compact context of this chat for a new one (prompt copied to the clipboard)
 - `/jevg ctx [list|<id>]`: in a new chat, attach a project capsule to the next message
 
+The mod's own messages (chat notices, toasts, command replies) and the UI come in English and Russian. Setting `ui.language`: `auto` (default) follows the language set in Claude Code (`language` in `~/.claude/settings.json`), then the system language; `en` or `ru` forces one.
+
 ## UI
 
 ```bash

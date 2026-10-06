@@ -211,6 +211,10 @@ describe('paste prompt', () => {
     const prompt = pastePrompt({ id: META.id, focus: 'UI' }, '/d/handoffs/20261005-1912-a3f0.md', 'Добавь архив');
     expect(CTX_REF.exec(prompt)?.[1]).toBe(META.id);
     expect(prompt).toContain('/d/handoffs/20261005-1912-a3f0.md');
+    const en = pastePrompt({ id: META.id, focus: 'UI' }, '/d/h.md', 'Add archive', 'en');
+    expect(en).toContain('Previous chat context: /d/h.md');
+    expect(attachedPrompt(en)).toContain('is attached to this message');
+    expect(attachedPrompt(en)).not.toContain('/d/h.md');
     const attached = attachedPrompt(prompt);
     expect(attached).not.toContain('/d/handoffs/');
     expect(attached).toContain('подключён к этому сообщению');

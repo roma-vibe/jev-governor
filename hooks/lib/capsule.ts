@@ -351,9 +351,19 @@ export function renderCapsule(input: {
 
 /** The sentence the new chat's model follows when the mod did not attach the capsule. */
 export const FALLBACK_HINT = 'если он не подключён к этому сообщению, сначала прочитай этот файл';
+const FALLBACK_HINT_EN = 'if it is not attached to this message, read this file first';
 
 /** What the person pastes into the new chat. */
-export function pastePrompt(meta: Pick<CapsuleMeta, 'id' | 'focus'>, path: string, title: string): string {
+export function pastePrompt(meta: Pick<CapsuleMeta, 'id' | 'focus'>, path: string, title: string, lang: 'ru' | 'en' = 'ru'): string {
+  if (lang === 'en') {
+    return [
+      `jev-ctx:${meta.id} — continuing work from the previous chat «${title}».`,
+      `Previous chat context: ${path} (${FALLBACK_HINT_EN}).`,
+      meta.focus ? `Task: ${meta.focus}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
   return [
     `jev-ctx:${meta.id} — продолжаем работу из прошлого чата «${title}».`,
     `Контекст прошлого чата: ${path} (${FALLBACK_HINT}).`,
@@ -365,7 +375,9 @@ export function pastePrompt(meta: Pick<CapsuleMeta, 'id' | 'focus'>, path: strin
 
 /** The pasted prompt once the mod attached the capsule: no instruction to read the file. */
 export function attachedPrompt(text: string): string {
-  return text.replace(/Контекст прошлого чата: \S+ \([^)]*\)\./, 'Контекст прошлого чата подключён к этому сообщению.');
+  return text
+    .replace(/Контекст прошлого чата: \S+ \([^)]*\)\./, 'Контекст прошлого чата подключён к этому сообщению.')
+    .replace(/Previous chat context: \S+ \([^)]*\)\./, 'Previous chat context is attached to this message.');
 }
 
 export function briefPrompt(focus: string, words: number): string {

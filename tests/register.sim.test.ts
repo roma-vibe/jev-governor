@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { resolveConfig } from '../hooks/lib/config.ts';
 import { register } from '../hooks/register.ts';
 
 type Handler = (...args: any[]) => any;
@@ -28,6 +29,12 @@ const macrotask = (fn: () => void): unknown => (globalThis as unknown as { setTi
 const HOME = '/home/r';
 const DATA = `${HOME}/.claude/jev-governor`;
 const files = new Map<string, string>();
+/** The mod's messages in the sim are Russian unless a test says otherwise ('auto' follows the machine). */
+const seedConfig = (language: 'ru' | 'en'): void => {
+  const cfg = resolveConfig(files.has(`${DATA}/config.json`) ? JSON.parse(files.get(`${DATA}/config.json`)!) : undefined);
+  files.set(`${DATA}/config.json`, `${JSON.stringify({ ...cfg, ui: { ...cfg.ui, language } }, null, 2)}\n`);
+};
+seedConfig('ru');
 /** The process environment the mod sets (`$.env.set`); HOME is answered apart. */
 const env = new Map<string, string>();
 const logs: string[] = [];
@@ -923,5 +930,24 @@ describe('jev-governor hooks against a fake engine', () => {
     const ledger = [...files.entries()].filter(([p]) => p.endsWith('trim-kinds-session.jsonl')).map(([, t]) => t).join('');
     expect(ledger).toContain('"skipped":"removes under 15%"');
     expect(ledger).toContain('"kind":"list"');
+  });
+
+  it('with ui.language en the handoff and ctx replies are English', async () => {
+    seedConfig('en');
+    try {
+      await startSession('en-session');
+      messages = oldChat();
+      const made = await emit('command.run', { command: 'jevg', args: 'getctx --nobrief' }, async () => ({ text: '' }));
+      expect(made.text).toMatch(/^Capsule \S+: ~[\d.]+k? tokens instead of 412k in this chat/);
+      expect(made.text).toContain('Open a new chat in this project and paste the prompt');
+      const started = await emit('command.run', { command: 'jevg', args: 'getctx --brief' }, async () => ({ text: '' }));
+      expect(started.text).toContain("this chat's model will write a brief");
+      const listed = await emit('command.run', { command: 'jevg', args: 'ctx list' }, async () => ({ text: '' }));
+      expect(listed.text).toContain('Capsules of this project (newest first):');
+      expect(listed.text).toContain('attached 1×');
+    } finally {
+      seedConfig('ru');
+      await startSession('after-en');
+    }
   });
 });

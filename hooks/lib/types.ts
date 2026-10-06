@@ -200,7 +200,7 @@ export type GovernorConfig = {
   ui: {
     port: number;
     /** Language of the settings page (the page itself is translated in ui/src/i18n). */
-    language: 'en' | 'ru';
+    language: 'auto' | 'en' | 'ru';
     /** Terminal used by "run in terminal" (only Terminal.app for now). */
     terminal: 'Terminal';
     /** Show the current routing in the status line. */

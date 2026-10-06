@@ -1,8 +1,9 @@
 // Settings page: section and field texts (settingsSchema.ts), Settings.vue, KeyBlock.vue.
 export default {
   'Interface language': 'Язык интерфейса',
-  'Language of this page. It applies after saving. Command descriptions have their own language setting in the Projects section.':
-    'Язык этой страницы. Применяется после сохранения. У описаний команд своя настройка языка в разделе «Проекты».',
+  'Language of this page and of the mod\'s messages in chat. Automatic follows the language set in Claude Code, then the system language. It applies after saving. Command descriptions have their own language setting in the Projects section.':
+    'Язык этой страницы и сообщений мода в чате. «Автоматически» берёт язык из настроек Claude Code, затем язык системы. Применяется после сохранения. У описаний команд своя настройка языка в разделе «Проекты».',
+  'Automatic': 'Автоматически',
   'General': 'Общие',
   'Mod enabled': 'Мод включён',
   'Main switch. When off, the mod changes nothing in Claude Code: no model, no effort, no subagents, no compaction. The same switch is the “On” badge at the top of the page.':

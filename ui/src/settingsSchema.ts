@@ -855,8 +855,8 @@ export function getSections(): Section[] {
           path: 'ui.language',
           label: t('Interface language'),
           kind: 'select',
-          options: LANGS,
-          help: t('Language of this page. It applies after saving. Command descriptions have their own language setting in the Projects section.'),
+          options: [{ value: 'auto', label: t('Automatic') }, ...LANGS],
+          help: t('Language of this page and of the mod\'s messages in chat. Automatic follows the language set in Claude Code, then the system language. It applies after saving. Command descriptions have their own language setting in the Projects section.'),
         },
         {
           path: 'ui.port',

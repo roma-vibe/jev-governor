@@ -30,6 +30,7 @@ import {
   type CapsuleMeta,
 } from './lib/capsule.ts';
 import { runCompaction, summarizeCompaction } from './lib/compaction/adapter.ts';
+import { resolveLang, systemLocales } from './lib/lang.ts';
 import { expandHome, isExcluded, resolveConfig } from './lib/config.ts';
 import { clip, estimateContextTokens, recentHistory, type HistoryMessage } from './lib/history.ts';
 import { choice, jevAsker, noul, withTimeout, type JevAsker, type JevQuestions, type JevResponse } from './lib/jev.ts';
@@ -96,6 +97,7 @@ import {
   rememberPruned,
   resultText,
   type Route,
+  L,
   S,
   shadow,
   type SpawnPlan,
@@ -131,6 +133,13 @@ async function readJson($: EngineInterface, path: string): Promise<unknown> {
   }
 }
 
+/** The language of the mod's messages: the setting, or (automatic) Claude Code's language, then the system's. */
+async function setLang($: EngineInterface): Promise<void> {
+  const setting = S.cfg.ui.language;
+  const claude = setting === 'auto' ? (await readJson($, `${S.data.replace(/[\\/][^\\/]+[\\/]?$/, '')}/settings.json`) as { language?: unknown } | undefined)?.language : undefined;
+  S.lang = resolveLang(setting, claude, systemLocales());
+}
+
 async function loadConfig($: EngineInterface, force: boolean): Promise<void> {
   const path = `${S.data}/config.json`;
   try {
@@ -138,11 +147,13 @@ async function loadConfig($: EngineInterface, force: boolean): Promise<void> {
     if (!force && stat.mtimeMs === S.cfgMtime) return;
     S.cfg = resolveConfig(await readJson($, path));
     S.cfgMtime = stat.mtimeMs;
+    await setLang($);
     // A window changed in the settings takes effect at once (bindSession logs it at start).
     if (!force) await applyAutoWindow($, false);
   } catch {
     // First run: write the defaults so the settings UI has a file to edit.
     S.cfg = resolveConfig(undefined);
+    await setLang($);
     try {
       await $.fs.write(path, `${JSON.stringify(S.cfg, null, 2)}\n`);
       S.cfgMtime = (await $.fs.stat(path)).mtimeMs;
@@ -424,7 +435,12 @@ async function askJev(
   } catch (error) {
     S.jevFailures++;
     if (S.jevFailures >= JEV_FAILS_SHOWN && S.cfg.ui.showStatus) {
-      $.ui.status(`jev ✕ Jev не отвечает (${S.jevFailures} ${times(S.jevFailures)} подряд): модель и effort — прошлого решения или запасные`);
+      $.ui.status(
+        L(
+          `jev ✕ Jev не отвечает (${S.jevFailures} ${times(S.jevFailures)} подряд): модель и effort — прошлого решения или запасные`,
+          `jev ✕ Jev is not answering (${S.jevFailures} ${times(S.jevFailures)} in a row): model and effort are from the last decision or the fallbacks`,
+        ),
+      );
     }
     await ledger($, { kind: 'error', error: `jev: ${errorText(error)}` });
     return undefined;
@@ -438,8 +454,9 @@ function isRetriable(error: unknown): boolean {
   return status === undefined ? true : status === '429' || status.startsWith('5');
 }
 
-/** "раз" in Russian after a count: 2 раза, 5 раз, 21 раз, 22 раза. */
+/** "раз" in Russian after a count: 2 раза, 5 раз, 21 раз, 22 раза (English: "times"). */
 function times(n: number): string {
+  if (S.lang !== 'ru') return 'times';
   const last = n % 10;
   return last >= 2 && last <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'раза' : 'раз';
 }
@@ -1122,8 +1139,8 @@ async function copyText($: EngineInterface, text: string): Promise<boolean> {
  */
 async function startHandoff($: EngineInterface, args: string, fresh = false): Promise<string> {
   const h = S.cfg.handoff;
-  if (!h.enabled) return 'Перенос контекста выключен (handoff.enabled в настройках).';
-  if (S.handoff) return 'Капсула уже готовится: дождитесь, пока модель допишет бриф.';
+  if (!h.enabled) return L('Перенос контекста выключен (handoff.enabled в настройках).', 'Context handoff is off (handoff.enabled in the settings).');
+  if (S.handoff) return L('Капсула уже готовится: дождитесь, пока модель допишет бриф.', 'A capsule is already being prepared: wait until the model finishes the brief.');
   const { brief, focus } = parseGetctxArgs(args);
   const id = capsuleId(new Date(), Math.random());
   const warm = cacheWarm();
@@ -1131,7 +1148,10 @@ async function startHandoff($: EngineInterface, args: string, fresh = false): Pr
   if (!wantBrief) {
     const note =
       brief === undefined && h.brief === 'auto'
-        ? `Бриф моделью пропущен: кэш этого чата остыл, и бриф стоил бы перезаписи всего контекста (сделать всё равно: /jevg ${fresh ? 'fresh' : 'getctx'} --brief).\n\n`
+        ? L(
+            `Бриф моделью пропущен: кэш этого чата остыл, и бриф стоил бы перезаписи всего контекста (сделать всё равно: /jevg ${fresh ? 'fresh' : 'getctx'} --brief).\n\n`,
+            `The model's brief was skipped: this chat's cache has gone cold, and the brief would cost a rewrite of the whole context (to do it anyway: /jevg ${fresh ? 'fresh' : 'getctx'} --brief).\n\n`,
+          )
         : '';
     const why = brief === false ? 'brief: --nobrief' : h.brief === 'never' ? 'brief: off in settings' : 'brief skipped: cache cold';
     return note + (await finishHandoff($, id, focus, undefined, why, fresh));
@@ -1144,14 +1164,21 @@ async function startHandoff($: EngineInterface, args: string, fresh = false): Pr
     pending.timer?.cancel();
     // The chat is not cleared on a capsule the person did not get as asked.
     if (fresh) return cancelFresh($, id, why);
-    $.ui.log(`jev-governor: ${why}, капсула без брифа.\n\n${await finishHandoff($, id, focus, undefined, `brief failed: ${why}`, fresh)}`);
+    const made = await finishHandoff($, id, focus, undefined, `brief failed: ${why}`, fresh);
+    $.ui.log(L(`jev-governor: ${why}, капсула без брифа.\n\n${made}`, `jev-governor: ${why}, capsule without a brief.\n\n${made}`));
   };
-  pending.timer = $.clock.after(6 * 60_000, () => void giveUp('бриф не пришёл за 6 минут'));
+  pending.timer = $.clock.after(6 * 60_000, () => void giveUp(L('бриф не пришёл за 6 минут', 'the brief did not arrive in 6 minutes')));
   // The person asked for it: sent as their own words, read bare (not framed as a plugin's message).
-  void $.prompt.submit({ text: briefPrompt(focus, h.briefWords), asUser: true }).catch((error: unknown) => giveUp(`бриф попросить не удалось (${errorText(error)})`));
-  return `Готовлю капсулу${focus ? ` (фокус: ${focus})` : ''}. Сначала модель этого чата напишет бриф: один короткий ход, пока кэш тёплый. ${
-    fresh ? 'Потом чат очистится (/clear), и капсула подключится к вашему следующему сообщению.' : 'Потом здесь появится промпт для нового чата.'
-  }`;
+  void $.prompt.submit({ text: briefPrompt(focus, h.briefWords), asUser: true }).catch((error: unknown) => giveUp(L(`бриф попросить не удалось (${errorText(error)})`, `could not ask for the brief (${errorText(error)})`)));
+  return (
+    L(`Готовлю капсулу${focus ? ` (фокус: ${focus})` : ''}.`, `Preparing the capsule${focus ? ` (focus: ${focus})` : ''}.`) +
+    ' ' +
+    L('Сначала модель этого чата напишет бриф: один короткий ход, пока кэш тёплый.', "First this chat's model will write a brief: one short turn while the cache is warm.") +
+    ' ' +
+    (fresh
+      ? L('Потом чат очистится (/clear), и капсула подключится к вашему следующему сообщению.', 'Then the chat will be cleared (/clear), and the capsule will attach to your next message.')
+      : L('Потом здесь появится промпт для нового чата.', 'Then a prompt for the new chat will appear here.'))
+  );
 }
 
 /**
@@ -1170,7 +1197,7 @@ function clearAndAttach($: EngineInterface, id: string, tokens: number, prompt: 
       let failed: string | undefined;
       try {
         await $.command.run({ command: 'clear', args: '' });
-        if ((await $.session.id()) === from) failed = 'чат не сменился';
+        if ((await $.session.id()) === from) failed = L('чат не сменился', 'the chat did not change');
       } catch (error) {
         failed = errorText(error);
       }
@@ -1180,16 +1207,26 @@ function clearAndAttach($: EngineInterface, id: string, tokens: number, prompt: 
         await ledger($, { kind: 'error', error: `fresh: /clear failed: ${failed}` });
         const copied = await copyText($, prompt);
         $.ui.log(
-          `jev-governor: очистить чат не удалось (${failed}). ${
-            copied ? 'Откройте новый чат в этом проекте и вставьте промпт из буфера обмена' : `Откройте новый чат в этом проекте и вставьте:\n\n${prompt}\n\nили наберите там`
-          } /jevg ctx.`,
+          L(`jev-governor: очистить чат не удалось (${failed}).`, `jev-governor: could not clear the chat (${failed}).`) +
+            ' ' +
+            (copied
+              ? L('Откройте новый чат в этом проекте и вставьте промпт из буфера обмена', 'Open a new chat in this project and paste the prompt from the clipboard')
+              : L(
+                  `Откройте новый чат в этом проекте и вставьте:\n\n${prompt}\n\nили наберите там`,
+                  `Open a new chat in this project and paste:\n\n${prompt}\n\nor type there`,
+                )) +
+            ' /jevg ctx.',
         );
       } else {
         S.attachNext = id;
         await ledger($, { kind: 'handoff', text: 'chat cleared', handoff: { action: 'clear', id, tokens } });
-        $.ui.toast(`jev-governor: чат очищен; капсула ${id} (~${kTokens(tokens)} токенов) подключится к вашему следующему сообщению`, {
-          timeoutMs: 15_000,
-        });
+        $.ui.toast(
+          L(
+            `jev-governor: чат очищен; капсула ${id} (~${kTokens(tokens)} токенов) подключится к вашему следующему сообщению`,
+            `jev-governor: chat cleared; capsule ${id} (~${kTokens(tokens)} tokens) will attach to your next message`,
+          ),
+          { timeoutMs: 15_000 },
+        );
       }
       await releaseHeld($);
     })();
@@ -1199,7 +1236,7 @@ function clearAndAttach($: EngineInterface, id: string, tokens: number, prompt: 
 /** `/jevg fresh` stopped before the clear: this chat stays as it is. */
 async function cancelFresh($: EngineInterface, id: string, why: string): Promise<void> {
   await ledger($, { kind: 'handoff', text: `fresh cancelled: ${why}`, handoff: { action: 'cancel', id, tokens: 0 } });
-  $.ui.log(`jev-governor: перенос отменён (${why}); чат не очищен.`);
+  $.ui.log(L(`jev-governor: перенос отменён (${why}); чат не очищен.`, `jev-governor: handoff cancelled (${why}); the chat was not cleared.`));
   await releaseHeld($);
 }
 
@@ -1210,7 +1247,12 @@ async function releaseHeld($: EngineInterface): Promise<void> {
       await $.prompt.submit({ text, asUser: true });
     } catch (error) {
       await ledger($, { kind: 'error', error: `fresh: held prompt not sent: ${errorText(error)}` });
-      $.ui.log(`jev-governor: не удалось отправить придержанное сообщение, наберите его ещё раз:\n\n${text}`);
+      $.ui.log(
+        L(
+          `jev-governor: не удалось отправить придержанное сообщение, наберите его ещё раз:\n\n${text}`,
+          `jev-governor: could not send the held message, type it again:\n\n${text}`,
+        ),
+      );
     }
   }
 }
@@ -1228,7 +1270,7 @@ async function finishHandoff(
   try {
     const messages = (await $.session.messages()) as unknown as CapsuleMessage[];
     const skeleton = buildSkeleton(messages, S.cwd);
-    if (skeleton.turns.length === 0 && !skeleton.summary && !brief?.trim()) return 'Переносить пока нечего: в этом чате ещё нет ни одного хода.';
+    if (skeleton.turns.length === 0 && !skeleton.summary && !brief?.trim()) return L('Переносить пока нечего: в этом чате ещё нет ни одного хода.', 'Nothing to hand off yet: there are no turns in this chat.');
     let need: Map<number, number> | undefined;
     let jevCost: number | undefined;
     let jevMs: number | undefined;
@@ -1285,7 +1327,7 @@ async function finishHandoff(
       attached: [],
     };
     await $.fs.write(`${handoffDir()}/${id}.json`, `${JSON.stringify(record, null, 2)}\n`);
-    const prompt = pastePrompt(meta, path, title);
+    const prompt = pastePrompt(meta, path, title, S.lang);
     // /jevg fresh copies it only should the clear fail.
     const copied = fresh ? false : await copyText($, prompt);
     await ledger($, {
@@ -1309,48 +1351,68 @@ async function finishHandoff(
     if (fresh) {
       clearAndAttach($, id, record.tokens, prompt);
       return [
-        `Капсула ${id}: ~${kTokens(record.tokens)} токенов вместо ${kTokens(sourceTokens)} в этом чате (ходов ${record.turns}; бриф ${record.brief ? 'да' : 'нет'}).`,
-        'Сейчас чат очистится (/clear), и капсула подключится к вашему следующему сообщению: просто продолжайте работу.',
+        L(
+          `Капсула ${id}: ~${kTokens(record.tokens)} токенов вместо ${kTokens(sourceTokens)} в этом чате (ходов ${record.turns}; бриф ${record.brief ? 'да' : 'нет'}).`,
+          `Capsule ${id}: ~${kTokens(record.tokens)} tokens instead of ${kTokens(sourceTokens)} in this chat (turns ${record.turns}; brief ${record.brief ? 'yes' : 'no'}).`,
+        ),
+        L(
+          'Сейчас чат очистится (/clear), и капсула подключится к вашему следующему сообщению: просто продолжайте работу.',
+          'The chat will be cleared now (/clear), and the capsule will attach to your next message: just keep working.',
+        ),
       ].join('\n');
     }
     return [
-      `Капсула ${id}: ~${kTokens(record.tokens)} токенов вместо ${kTokens(sourceTokens)} в этом чате (ходов ${record.turns}; бриф ${record.brief ? 'да' : 'нет'}; отбор ходов Jev ${record.jev ? 'да' : 'нет'}).`,
-      `Файл: ${path}`,
-      copied ? 'Промпт для нового чата скопирован в буфер обмена:' : 'Промпт для нового чата (скопируйте):',
+      L(
+        `Капсула ${id}: ~${kTokens(record.tokens)} токенов вместо ${kTokens(sourceTokens)} в этом чате (ходов ${record.turns}; бриф ${record.brief ? 'да' : 'нет'}; отбор ходов Jev ${record.jev ? 'да' : 'нет'}).`,
+        `Capsule ${id}: ~${kTokens(record.tokens)} tokens instead of ${kTokens(sourceTokens)} in this chat (turns ${record.turns}; brief ${record.brief ? 'yes' : 'no'}; Jev turn selection ${record.jev ? 'yes' : 'no'}).`,
+      ),
+      L(`Файл: ${path}`, `File: ${path}`),
+      copied
+        ? L('Промпт для нового чата скопирован в буфер обмена:', 'The prompt for the new chat is copied to the clipboard:')
+        : L('Промпт для нового чата (скопируйте):', 'The prompt for the new chat (copy it):'),
       '',
       prompt,
       '',
-      'Откройте новый чат в этом проекте и вставьте промпт: капсула подключится сама. Без вставки — команда /jevg ctx в новом чате.',
+      L(
+        'Откройте новый чат в этом проекте и вставьте промпт: капсула подключится сама. Без вставки — команда /jevg ctx в новом чате.',
+        'Open a new chat in this project and paste the prompt: the capsule will attach by itself. Without pasting, use the /jevg ctx command in the new chat.',
+      ),
     ].join('\n');
   } catch (error) {
     await ledger($, { kind: 'error', error: `handoff: ${errorText(error)}` });
-    return `Не удалось собрать капсулу: ${errorText(error)}`;
+    return L(`Не удалось собрать капсулу: ${errorText(error)}`, `Could not build the capsule: ${errorText(error)}`);
   }
 }
 
 /** `/jevg ctx [list|<id>]` in a new chat: attach a capsule of this project to the next prompt. */
 async function attachCommand($: EngineInterface, rest: string): Promise<string> {
   const list = await listCapsules($);
-  const none = 'Капсул для этого проекта нет. В старом чате: /jevg getctx';
+  const none = L('Капсул для этого проекта нет. В старом чате: /jevg getctx', 'There are no capsules for this project. In the old chat: /jevg getctx');
   if (rest === 'list') {
     if (list.length === 0) return none;
     return [
-      'Капсулы этого проекта (новые сверху):',
+      L('Капсулы этого проекта (новые сверху):', 'Capsules of this project (newest first):'),
       ...list.slice(0, 12).map(
         (m) =>
-          `- ${m.id} · ${m.title} · ~${kTokens(m.tokens)}${m.focus ? ` · фокус: ${m.focus}` : ''}${m.session === S.session ? ' · из этого чата' : ''}${m.attached.length > 0 ? ` · подключалась ${m.attached.length}×` : ''}`,
+          `- ${m.id} · ${m.title} · ~${kTokens(m.tokens)}` +
+          (m.focus ? L(` · фокус: ${m.focus}`, ` · focus: ${m.focus}`) : '') +
+          (m.session === S.session ? L(' · из этого чата', ' · from this chat') : '') +
+          (m.attached.length > 0 ? L(` · подключалась ${m.attached.length}×`, ` · attached ${m.attached.length}×`) : ''),
       ),
       '',
-      '/jevg ctx <id> — подключить к следующему сообщению.',
+      L('/jevg ctx <id> — подключить к следующему сообщению.', '/jevg ctx <id> — attach to the next message.'),
     ].join('\n');
   }
   const target = rest
     ? (list.find((m) => m.id === rest || m.id.endsWith(rest)) ?? (await readCapsule($, rest))?.meta)
     : list.find((m) => m.session !== S.session);
-  if (!target) return rest ? `Капсула ${rest} не найдена. Список: /jevg ctx list` : none;
-  if (target.session === S.session) return `Капсула ${target.id} сделана в этом же чате: подключать её сюда незачем.`;
+  if (!target) return rest ? L(`Капсула ${rest} не найдена. Список: /jevg ctx list`, `Capsule ${rest} not found. List: /jevg ctx list`) : none;
+  if (target.session === S.session) return L(`Капсула ${target.id} сделана в этом же чате: подключать её сюда незачем.`, `Capsule ${target.id} was made in this same chat: no need to attach it here.`);
   S.attachNext = target.id;
-  return `Капсула ${target.id} («${target.title}», ~${kTokens(target.tokens)} токенов) будет подключена к вашему следующему сообщению.`;
+  return L(
+    `Капсула ${target.id} («${target.title}», ~${kTokens(target.tokens)} токенов) будет подключена к вашему следующему сообщению.`,
+    `Capsule ${target.id} ("${target.title}", ~${kTokens(target.tokens)} tokens) will attach to your next message.`,
+  );
 }
 
 /**
@@ -1371,8 +1433,14 @@ async function suggestNewChat($: EngineInterface, text: string, outcome: MainOut
   S.hintTurn = S.mainTurns;
   $.ui.toast(
     newTask
-      ? `jev-governor: похоже, это новая задача, а контекст уже ${kTokens(tokens)} — каждый шаг перечитывает его. Дешевле продолжить с чистым чатом и капсулой: /jevg fresh`
-      : `jev-governor: кэш остыл, и этот ход заново запишет ${kTokens(tokens)} контекста. Дешевле продолжить с чистым чатом и капсулой: /jevg fresh`,
+      ? L(
+          `jev-governor: похоже, это новая задача, а контекст уже ${kTokens(tokens)} — каждый шаг перечитывает его. Дешевле продолжить с чистым чатом и капсулой: /jevg fresh`,
+          `jev-governor: this looks like a new task, and the context is already ${kTokens(tokens)} — every step rereads it. It is cheaper to continue with a clean chat and a capsule: /jevg fresh`,
+        )
+      : L(
+          `jev-governor: кэш остыл, и этот ход заново запишет ${kTokens(tokens)} контекста. Дешевле продолжить с чистым чатом и капсулой: /jevg fresh`,
+          `jev-governor: the cache has gone cold, and this turn will rewrite ${kTokens(tokens)} of context. It is cheaper to continue with a clean chat and a capsule: /jevg fresh`,
+        ),
     { timeoutMs: 15_000 },
   );
   await ledger($, {
@@ -1538,12 +1606,15 @@ async function statusReport($: EngineInterface): Promise<string> {
   const cfg = S.cfg;
   const prev = S.route.previous;
   const lines = [
-    `jev-governor ${cfg.enabled ? (S.chat.off ? 'OFF in this chat (/jevg chat on)' : `ON (${shadow() ? 'наблюдение' : 'active'})`) : 'OFF'} · key ${S.key ? 'found' : 'MISSING'} · Jev ${cfg.jev.model}${isExcluded(cfg, S.cwd, S.home) ? ' · проект исключён: к Jev ничего не уходит' : ''}`,
+    `jev-governor ${cfg.enabled ? (S.chat.off ? 'OFF in this chat (/jevg chat on)' : `ON (${shadow() ? L('наблюдение', 'shadow') : 'active'})`) : 'OFF'} · key ${S.key ? 'found' : 'MISSING'} · Jev ${cfg.jev.model}${isExcluded(cfg, S.cwd, S.home) ? L(' · проект исключён: к Jev ничего не уходит', ' · project excluded: nothing is sent to Jev') : ''}`,
     `routing: main model ${cfg.router.mainModel ? 'on' : 'off'}, main effort ${cfg.router.mainEffort ? 'on' : 'off'}, subagents ${cfg.router.subagents ? 'on' : 'off'}; compaction ${cfg.compaction.enabled ? `on (at ${Math.round(cfg.compaction.compactAtTokens / 1000)}k${cfg.compaction.archive ? ', archive' : ''})` : 'off'}; handoff ${cfg.handoff.enabled ? 'on' : 'off'}`,
     `last: ${S.route.lastModel ? displayModel(S.route.lastModel) : '—'}${prev ? ` · ${prev.effort}` : ''} · budget ${budget.text || 'n/a'} (pressure ${budget.pressure})`,
     `agents: ${S.agents.size} (${[...S.agents.keys()].slice(0, 12).join(', ') || 'none yet'}) · skills: ${S.skills.size}`,
     `data: ${S.data}`,
-    'commands: /jevg status | on | off | chat on|off | idle on|off | ui | reload | fresh [--brief|--nobrief] [фокус] | getctx [--brief|--nobrief] [фокус] | ctx [list|<id>]',
+    L(
+      'commands: /jevg status | on | off | chat on|off | idle on|off | ui | reload | fresh [--brief|--nobrief] [фокус] | getctx [--brief|--nobrief] [фокус] | ctx [list|<id>]',
+      'commands: /jevg status | on | off | chat on|off | idle on|off | ui | reload | fresh [--brief|--nobrief] [focus] | getctx [--brief|--nobrief] [focus] | ctx [list|<id>]',
+    ),
   ];
   return lines.join('\n');
 }
@@ -1582,8 +1653,14 @@ async function bindSession($: EngineInterface, starting: boolean): Promise<void>
     if (starting) void compactIdle($, 'resumed session');
     await $.command.register({
       name: 'jevg',
-      description: 'jev-governor: status, on, off, chat on|off (this chat only), idle on|off (compact after a pause in this chat), ui, reload; fresh — продолжить в этом окне с чистым чатом и капсулой; getctx — капсула для нового чата, ctx — подключить её',
-      argumentHint: '[status|on|off|chat on|off|idle on|off|ui|reload|fresh [фокус]|getctx [фокус]|ctx [list|id]]',
+      description: L(
+        'jev-governor: status, on, off, chat on|off (this chat only), idle on|off (compact after a pause in this chat), ui, reload; fresh — продолжить в этом окне с чистым чатом и капсулой; getctx — капсула для нового чата, ctx — подключить её',
+        'jev-governor: status, on, off, chat on|off (this chat only), idle on|off (compact after a pause in this chat), ui, reload; fresh — continue in this window with a clean chat and a capsule; getctx — a capsule for a new chat; ctx — attach it',
+      ),
+      argumentHint: L(
+        '[status|on|off|chat on|off|idle on|off|ui|reload|fresh [фокус]|getctx [фокус]|ctx [list|id]]',
+        '[status|on|off|chat on|off|idle on|off|ui|reload|fresh [focus]|getctx [focus]|ctx [list|id]]',
+      ),
     });
     $.clock.every(8000, () => {
       void processDrafts($).then(() => processDescribe($)).catch(() => undefined);
@@ -1798,7 +1875,7 @@ export const register: Register = (on) => {
       const rewrite = switched && applied && !outcome.manual && !wasFree && !outcome.cacheCold ? outcome.contextTokens : undefined;
       const shown = statusText(model, effort ?? (typeof e.effort === 'string' ? e.effort : undefined), outcome.pressureText);
       // While Jev fails, the ✕ stays (a bare "go on" decided without Jev would hide it).
-      if (S.cfg.ui.showStatus && S.jevFailures < JEV_FAILS_SHOWN) $.ui.status(applied ? shown : `${shown} (наблюдение)`);
+      if (S.cfg.ui.showStatus && S.jevFailures < JEV_FAILS_SHOWN) $.ui.status(applied ? shown : `${shown} (${L('наблюдение', 'shadow')})`);
       if (switched && applied) {
         $.ui.log(`jev-governor: ${displayModel(prevModel ?? '')} → ${displayModel(model)} (${decision.reasons.join('; ')})`);
       }
@@ -2003,7 +2080,12 @@ export const register: Register = (on) => {
       pending.timer?.cancel();
       // Interrupted (Esc), failed or refused: no brief. For /jevg fresh that stops it, the chat stays.
       const answered = e.reason === 'answer' && e.answer.trim().length > 0;
-      const why = e.reason === 'aborted' ? 'бриф прерван' : e.reason === 'answer' ? 'бриф пустой' : `бриф не получен: ${e.reason}`;
+      const why =
+        e.reason === 'aborted'
+          ? L('бриф прерван', 'the brief was interrupted')
+          : e.reason === 'answer'
+            ? L('бриф пустой', 'the brief is empty')
+            : L(`бриф не получен: ${e.reason}`, `no brief received: ${e.reason}`);
       // Not from inside turn.complete (the turn waits on it): just after it.
       $.clock.after(300, () => {
         if (pending.fresh && !answered) {
@@ -2098,7 +2180,10 @@ export const register: Register = (on) => {
     if ((S.handoff?.fresh || S.clearing) && typed && !e.text.includes(BRIEF_MARKER) && e.text.trim()) {
       S.held.push(e.text);
       return {
-        drop: `jev-governor: сообщение придержано — оно уйдёт сразу после очистки чата, вместе с капсулой${e.attachments?.length ? ' (вложения прикрепите заново)' : ''}.`,
+        drop:
+          L('jev-governor: сообщение придержано — оно уйдёт сразу после очистки чата, вместе с капсулой', 'jev-governor: message held — it will go right after the chat is cleared, together with the capsule') +
+          (e.attachments?.length ? L(' (вложения прикрепите заново)', ' (attach the attachments again)') : '') +
+          '.',
       };
     }
     if (!S.cfg.enabled || !S.cfg.handoff.enabled || !S.data || e.text.includes(BRIEF_MARKER)) return next(e);
@@ -2128,7 +2213,13 @@ export const register: Register = (on) => {
         text: clip(meta.title, 160),
         handoff: { action: 'attach', id, tokens: meta.tokens, sourceTokens: meta.sourceTokens, turns: meta.turns, path: meta.path },
       });
-      $.ui.toast(`jev-governor: подключён контекст прошлого чата (~${kTokens(meta.tokens)} токенов)`, { timeoutMs: 6000 });
+      $.ui.toast(
+        L(
+          `jev-governor: подключён контекст прошлого чата (~${kTokens(meta.tokens)} токенов)`,
+          `jev-governor: the context of the previous chat is attached (~${kTokens(meta.tokens)} tokens)`,
+        ),
+        { timeoutMs: 6000 },
+      );
     }
     return result;
   });

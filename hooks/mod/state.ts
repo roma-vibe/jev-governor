@@ -10,6 +10,7 @@ import type { CapsuleMeta } from '../lib/capsule.ts';
 import { collectToolCalls } from '../lib/compaction/state.ts';
 import type { CallDecision, Message } from '../lib/compaction/types.ts';
 import { DEFAULT_CONFIG, isExcluded, isShadow } from '../lib/config.ts';
+import type { Lang } from '../lib/lang.ts';
 import { displayModel } from '../lib/providers.ts';
 import { DEFAULT_TURN, type Decision, type Signals, type TurnProfile } from '../lib/router.ts';
 import type { AgentRecord, Effort, GovernorConfig, LedgerEntry, SkillRecord, Tier } from '../lib/types.ts';
@@ -92,6 +93,8 @@ export type PendingSpawn = { promptKey: string; sub: SubState; at: number };
 export const S = {
   cfg: DEFAULT_CONFIG as GovernorConfig,
   cfgMtime: -1,
+  /** Language of the mod's messages (`ui.language`, 'auto' resolved). */
+  lang: 'en' as Lang,
   data: '',
   home: '',
   key: undefined as string | undefined,
@@ -319,3 +322,6 @@ export function kTokens(tokens: number | undefined): string {
 export function cacheWarm(): boolean {
   return S.lastMainStepAt !== undefined && Date.now() - S.lastMainStepAt < (S.cfg.router.cacheTtlMinutes - 2) * 60_000;
 }
+
+/** A message of the mod in the language of this chat: `L('по-русски', 'in English')`. */
+export const L = (ru: string, en: string): string => (S.lang === 'ru' ? ru : en);

@@ -15,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { resolveLang, systemLocales } from '../hooks/lib/lang.ts';
 import { DEFAULT_CONFIG, expandHome, resolveConfig } from '../hooks/lib/config.ts';
 import { parseLang, setFallbackLang, tr, withLang } from './lib/i18n.ts';
 import { jevAsker, noul, type HttpLike } from '../hooks/lib/jev.ts';
@@ -24,7 +25,7 @@ import type { AgentRecord, DraftRecord, GovernorConfig, LedgerEntry, SkillRecord
 import { pricable } from './lib/pricable.ts';
 import { createProjects, entriesOfProject } from './lib/projects.ts';
 
-const VERSION = '0.3.0';
+const VERSION = '0.3.1';
 const UI_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(UI_DIR);
 const DIST = path.join(UI_DIR, 'dist');
@@ -84,7 +85,8 @@ async function resolvePort(): Promise<number> {
   return resolveConfig(await readJson(CONFIG_FILE)).ui.port;
 }
 
-setFallbackLang(resolveConfig(await readJson(CONFIG_FILE)).ui.language);
+const claudeLanguage = (await readJson(path.join(path.dirname(DATA), 'settings.json')) as { language?: unknown } | undefined)?.language;
+setFallbackLang(resolveLang(resolveConfig(await readJson(CONFIG_FILE)).ui.language, claudeLanguage, systemLocales()));
 const PORT = await resolvePort();
 const URL_LINE = `jev-governor UI: http://127.0.0.1:${PORT}`;
 
