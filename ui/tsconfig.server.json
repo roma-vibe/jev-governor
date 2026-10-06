@@ -1,0 +1,15 @@
+{
+  // The settings-UI server and its libraries run in Node, so they get Node's
+  // types here. The root config keeps "types": [] because the mod's hooks run
+  // in the Claude Code engine, where Node globals do not exist.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    // Node runs these files by stripping the types: no enums, namespaces or
+    // parameter properties, and type-only imports marked `import type`.
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["server.ts", "lib/**/*.ts", "../tests/projects.test.ts"],
+  "exclude": []
+}

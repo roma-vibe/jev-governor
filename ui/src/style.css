@@ -1,0 +1,75 @@
+@import 'tailwindcss';
+
+@layer base {
+  html {
+    color-scheme: light dark;
+  }
+  body {
+    @apply bg-zinc-50 text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+  }
+  button:not(:disabled),
+  [role='switch']:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-zinc-200 bg-white p-4 shadow-xs dark:border-zinc-800 dark:bg-zinc-900;
+  }
+  .card-title {
+    @apply mb-2 text-xs font-semibold tracking-wide text-zinc-500 uppercase dark:text-zinc-400;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-800 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700;
+  }
+  .btn-primary {
+    @apply border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-500 dark:border-indigo-500 dark:bg-indigo-500 dark:text-white dark:hover:bg-indigo-400;
+  }
+  .btn-danger {
+    @apply border-red-300 bg-white text-red-700 hover:bg-red-50 dark:border-red-900 dark:bg-zinc-800 dark:text-red-400 dark:hover:bg-red-950;
+  }
+  .btn-sm {
+    @apply px-2 py-1 text-xs;
+  }
+  .input {
+    @apply w-full rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 focus:outline-none disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-600;
+  }
+  .label {
+    @apply block text-sm font-medium text-zinc-800 dark:text-zinc-200;
+  }
+  .help {
+    @apply mt-1 text-xs leading-snug text-zinc-500 dark:text-zinc-400;
+  }
+  .badge {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap ring-1 ring-inset;
+  }
+  .badge-gray {
+    @apply bg-zinc-100 text-zinc-700 ring-zinc-300 dark:bg-zinc-800 dark:text-zinc-300 dark:ring-zinc-700;
+  }
+  .badge-indigo {
+    @apply bg-indigo-50 text-indigo-700 ring-indigo-200 dark:bg-indigo-950 dark:text-indigo-300 dark:ring-indigo-800;
+  }
+  .badge-amber {
+    @apply bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:ring-amber-800;
+  }
+  .badge-green {
+    @apply bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:ring-emerald-800;
+  }
+  .badge-red {
+    @apply bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-300 dark:ring-red-800;
+  }
+  .th {
+    @apply px-3 py-2 text-left text-xs font-semibold whitespace-nowrap text-zinc-500 dark:text-zinc-400;
+  }
+  .td {
+    @apply px-3 py-2 align-top text-sm;
+  }
+  .mono {
+    @apply font-mono text-xs;
+  }
+  /* Diagonal stripes over a bar: the amount is an estimate, not a measurement. */
+  .hatch {
+    background-image: repeating-linear-gradient(135deg, rgb(255 255 255 / 0.45) 0 3px, transparent 3px 6px);
+  }
+}

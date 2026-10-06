@@ -1,0 +1,22 @@
+{
+  "name": "jev-governor",
+  "version": "0.2.7",
+  "private": true,
+  "type": "module",
+  "description": "Claude Code mod: Jev decides model, effort and subagents to save subscription limits without losing quality.",
+  "license": "MIT",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json && tsc -p ui/tsconfig.server.json",
+    "validate": "sh scripts/validate.sh",
+    "ui:install": "npm --prefix ui install",
+    "ui:dev": "npm --prefix ui run dev",
+    "ui:build": "npm --prefix ui run build",
+    "ui": "node ui/server.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.2"
+  }
+}

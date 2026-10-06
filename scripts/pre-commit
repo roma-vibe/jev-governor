@@ -1,0 +1,58 @@
+#!/bin/sh
+# Refuses a commit the engine would not load, or one that breaks the types or
+# the tests. Installed by scripts/install-hooks.sh as .git/hooks/pre-commit.
+#
+# It checks what is staged, not the working tree: the index is checked out
+# into a temporary directory, with the dependencies linked in, and every check
+# runs there.
+top=$(git rev-parse --show-toplevel) || exit 1
+cd "$top" || exit 1
+staged=$(git diff --cached --name-only)
+changed() { echo "$staged" | grep -q "$1"; }
+
+validate=0; code=0; ui=0
+changed '^hooks/\|^\.claude-plugin/' && validate=1
+changed '^hooks/\|^ui/\|^tests/\|^scripts/\|^[^/]*\.json$' && code=1
+changed '^ui/\|^hooks/lib/' && ui=1
+[ $validate$code$ui = 000 ] && exit 0
+
+# A worktree may have no dependencies of its own: then the main checkout's.
+main=$(cd "$(git rev-parse --git-common-dir)/.." && pwd) || main=$top
+dep() {
+  for root in "$top" "$main"; do
+    if [ -e "$root/$1" ]; then echo "$root/$1"; return 0; fi
+  done
+  return 1
+}
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/jev-pre-commit.XXXXXX") || exit 1
+trap 'rm -rf "$tmp"' EXIT
+trap 'exit 1' HUP INT TERM
+tree="$tmp/tree"
+git checkout-index -a --prefix="$tree/" || { echo "pre-commit: could not check out the index" >&2; exit 1; }
+for p in node_modules ui/node_modules .claude/types .claude-plugin/types; do
+  src=$(dep "$p") && [ -d "$tree/$(dirname "$p")" ] && [ ! -e "$tree/$p" ] && ln -s "$src" "$tree/$p"
+done
+# The checks below must not see the hook's index or repository.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE
+cd "$tree" || exit 1
+
+if [ $validate = 1 ]; then
+  sh scripts/validate.sh || { echo "pre-commit: plugin validate failed" >&2; exit 1; }
+fi
+if [ $code = 1 ]; then
+  if [ ! -e node_modules ]; then
+    echo "pre-commit: node_modules not found (run npm install): cannot type-check or test" >&2
+    exit 1
+  fi
+  npm run -s typecheck || { echo "pre-commit: typecheck failed" >&2; exit 1; }
+  npx --no-install vitest run >"$tmp/vitest.log" 2>&1 || { tail -40 "$tmp/vitest.log"; echo "pre-commit: tests failed" >&2; exit 1; }
+fi
+if [ $ui = 1 ]; then
+  if [ -e ui/node_modules ]; then
+    (cd ui && npx --no-install vue-tsc --noEmit) || { echo "pre-commit: UI typecheck failed" >&2; exit 1; }
+  else
+    echo "pre-commit: WARNING: ui/node_modules not found (npm run ui:install): the UI type check (vue-tsc) was skipped" >&2
+  fi
+fi
+exit 0
