@@ -277,6 +277,7 @@ export type LedgerKind =
   | 'rerun-after-prune'
   | 'override'
   | 'light-up'
+  | 'chat'
   | 'window'
   | 'error';
 

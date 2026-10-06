@@ -35,6 +35,7 @@ let clipboard = '';
 let sessionId = 'old-session';
 let messages: unknown[] = [];
 const timers: (() => void)[] = [];
+const store = new Map<string, unknown>();
 const submitted: { text: string; asUser?: boolean }[] = [];
 const commandsRun: string[] = [];
 /** Every request body sent to Jev. */
@@ -158,7 +159,7 @@ const $ = {
     }),
     compact: async () => ({ skip: 'test' }),
   },
-  store: { get: async () => undefined, set: async () => undefined },
+  store: { get: async (key: string) => store.get(key), set: async (key: string, value: unknown) => void store.set(key, value) },
   command: {
     register: async () => ({}),
     run: async (input: { command: string }) => {
@@ -830,6 +831,66 @@ describe('jev-governor hooks against a fake engine', () => {
       jevTier = 'strong';
       jevEffortScore = 2;
     }
+  });
+
+  it('/jevg chat off stops the mod in that chat only, and is remembered for it', async () => {
+    await startSession('chat-off-session');
+    jevTier = 'standard';
+    const step = async (turnId: string): Promise<{ model: string; effort: unknown }> => {
+      let seen = { model: '', effort: undefined as unknown };
+      const it = handlers.get('turn.step')![0]!($, { turnId, model: 'claude-opus-5-5', effort: 'xhigh' }, async function* (x: any) {
+        seen = { model: x.model, effort: x.effort };
+        yield x;
+      });
+      for await (const _ of it as AsyncIterable<unknown>) {
+        // drain
+      }
+      return seen;
+    };
+    try {
+      const reply = await emit('command.run', { command: 'jevg', args: 'chat off' }, async () => ({ text: '' }));
+      expect(reply.text).toContain('mod OFF');
+      const before = bodies.length;
+      await emit('turn.start', { turnId: 'off-1', text: 'Объясни, как работает кэш' });
+      expect(bodies.length).toBe(before);
+      // Nothing is changed: the engine's own model and effort go through.
+      expect(await step('off-1')).toEqual({ model: 'claude-opus-5-5', effort: 'xhigh' });
+      expect((await emit('command.run', { command: 'jevg', args: 'status' }, async () => ({ text: '' }))).text).toContain('OFF in this chat');
+
+      // Another chat is not affected; coming back to this one finds it still off.
+      await startSession('other-session');
+      expect((await emit('command.run', { command: 'jevg', args: 'chat' }, async () => ({ text: '' }))).text).toContain('mod on');
+      await startSession('chat-off-session');
+      expect((await emit('command.run', { command: 'jevg', args: 'chat' }, async () => ({ text: '' }))).text).toContain('mod OFF');
+
+      const on = await emit('command.run', { command: 'jevg', args: 'chat on' }, async () => ({ text: '' }));
+      expect(on.text).toContain('mod on');
+      await emit('turn.start', { turnId: 'on-1', text: 'Объясни, как работает кэш' });
+      expect(bodies.length).toBeGreaterThan(before);
+    } finally {
+      jevTier = 'strong';
+    }
+  });
+
+  it('/jevg idle on arms compaction after a pause for this chat only', async () => {
+    const config = JSON.parse(files.get(`${DATA}/config.json`) ?? '{}');
+    config.compaction = { ...config.compaction, onReturn: false };
+    files.set(`${DATA}/config.json`, JSON.stringify(config));
+    await startSession('idle-session');
+    await emit('turn.start', { turnId: 'idle-1', text: 'Привет' });
+    timers.length = 0;
+    const off = await emit('command.run', { command: 'jevg', args: 'idle' }, async () => ({ text: '' }));
+    expect(off.text).toContain('compaction after a pause off');
+    expect(timers.length).toBe(0);
+    const on = await emit('command.run', { command: 'jevg', args: 'idle on' }, async () => ({ text: '' }));
+    expect(on.text).toContain('on (this chat)');
+    expect(timers.length).toBe(1);
+    await emit('command.run', { command: 'jevg', args: 'idle off' }, async () => ({ text: '' }));
+    expect(timers.length).toBe(0);
+    // A chat of its own: the flag does not leak into a new one.
+    await emit('command.run', { command: 'jevg', args: 'idle on' }, async () => ({ text: '' }));
+    await startSession('idle-other-session');
+    expect((await emit('command.run', { command: 'jevg', args: 'idle' }, async () => ({ text: '' }))).text).toContain('compaction after a pause off');
   });
 
   it('a file dump is not a build run, a long listing is shortened, a trim that saves little keeps the output', async () => {

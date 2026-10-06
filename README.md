@@ -57,6 +57,8 @@ Mods run with your permissions and are not sandboxed: read the code before you e
 
 - `/jevg`: status (key, last decision, limits, agents)
 - `/jevg on` / `/jevg off`: enable or disable the mod
+- `/jevg chat on|off`: switch the mod off (or back on) for this chat only; nothing is routed, trimmed, compacted or sent to Jev there. Remembered for the chat, also after a restart or resume
+- `/jevg idle on|off`: compact this chat after a pause (cache expired) even though the setting `compaction.onReturn` is off
 - `/jevg ui`: start the settings UI in the background (http://127.0.0.1:4777)
 - `/jevg reload`: re-read config, key and the agent registry
 - `/jevg fresh [--brief|--nobrief] [focus]`: continue in this window with a clean chat

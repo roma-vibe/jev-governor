@@ -100,6 +100,8 @@ export const S = {
   /** The session's project root (`$.session.root()`), not the shell's current folder. */
   cwd: '',
   route: { freeSwitch: true } as Route,
+  /** Per chat, kept in the store: `off` — the mod does nothing here; `idle` — compact after a pause here. */
+  chat: { off: false, idle: false },
   turn: undefined as TurnState | undefined,
   subs: new Map<string, SubState>(),
   agents: new Map<string, AgentRecord>(),
@@ -177,6 +179,16 @@ export function basename(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
+/** Whether the mod works in this chat: enabled in the config and not switched off for the chat (`/jevg chat off`). */
+export function active(): boolean {
+  return S.cfg.enabled && !S.chat.off;
+}
+
+/** Compaction after a pause: the setting, or switched on for this chat (`/jevg idle on`). */
+export function idleCompaction(): boolean {
+  return S.cfg.compaction.onReturn || S.chat.idle;
+}
+
 /** Shadow mode: decide and log, change nothing. */
 export function shadow(): boolean {
   return isShadow(S.cfg, S.cwd, S.home);
@@ -184,7 +196,7 @@ export function shadow(): boolean {
 
 /** The OpenRouter key, unless this project is excluded from Jev (then nothing goes out). */
 export function jevKey(): string | undefined {
-  return S.key && !isExcluded(S.cfg, S.cwd, S.home) ? S.key : undefined;
+  return S.key && !S.chat.off && !isExcluded(S.cfg, S.cwd, S.home) ? S.key : undefined;
 }
 
 export function errorText(error: unknown): string {

@@ -12,6 +12,7 @@ export default {
   'handoff: context handoff to a new chat': 'handoff: перенос контекста в новый чат',
   'hint: new chat hints': 'hint: подсказки о новом чате',
   'override: your /model and effort changes': 'override: ваши /model и смены effort',
+  'chat: /jevg chat and /jevg idle in a chat': 'chat: /jevg chat и /jevg idle в чате',
   'light-up: a light subagent moved to the standard model': 'light-up: лёгкий субагент переведён на стандартную модель',
   'rerun-after-prune: rerun of what compaction removed': 'rerun-after-prune: повтор убранного сжатием',
   'redacted: secrets removed from requests to Jev': 'redacted: секреты, убранные из запросов к Jev',

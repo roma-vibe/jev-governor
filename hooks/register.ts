@@ -81,6 +81,8 @@ import {
   errorText,
   type Handoff,
   handoffDir,
+  active,
+  idleCompaction,
   jevKey,
   kTokens,
   learnTurn,
@@ -163,7 +165,7 @@ async function applyAutoWindow($: EngineInterface, log: boolean): Promise<void> 
   try {
     // Only where the hook prunes: in shadow mode, an excluded project or without a key a smaller
     // window would only bring Claude Code's paid summaries sooner.
-    const prunes = S.cfg.enabled && S.cfg.compaction.enabled && jevKey() !== undefined && !shadow();
+    const prunes = active() && S.cfg.compaction.enabled && jevKey() !== undefined && !shadow();
     const want = prunes ? S.cfg.compaction.autoWindowTokens : 0;
     const current = await $.env.get('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
     const mine = await $.env.get('JEV_GOVERNOR_AUTO_WINDOW');
@@ -343,6 +345,24 @@ async function saveRoute($: EngineInterface): Promise<void> {
     await $.store.set(`route:${S.session}`, { ...S.route, savedAt: Date.now() });
   } catch {
     // best effort
+  }
+}
+
+/** The chat's own switches (`/jevg chat`, `/jevg idle`) outlive a restart and a resume of the chat. */
+async function saveChat($: EngineInterface): Promise<void> {
+  try {
+    await $.store.set(`chat:${S.session}`, { ...S.chat, savedAt: Date.now() });
+  } catch {
+    // best effort
+  }
+}
+
+async function restoreChat($: EngineInterface): Promise<void> {
+  try {
+    const saved = (await $.store.get(`chat:${S.session}`)) as { off?: unknown; idle?: unknown } | undefined;
+    S.chat = { off: saved?.off === true, idle: saved?.idle === true };
+  } catch {
+    S.chat = { off: false, idle: false };
   }
 }
 
@@ -954,7 +974,7 @@ async function requestCompaction($: EngineInterface, reason: 'threshold' | 'retu
  */
 async function compactIdle($: EngineInterface, why: string): Promise<void> {
   const k = S.cfg.compaction;
-  if (!S.cfg.enabled || !k.enabled || !k.onReturn || !jevKey() || shadow() || S.compacting) return;
+  if (!active() || !k.enabled || !idleCompaction() || !jevKey() || shadow() || S.compacting) return;
   if (S.route.lastRequestAt === undefined) return;
   const idleFor = Date.now() - S.route.lastRequestAt;
   if (idleFor <= S.cfg.router.cacheTtlMinutes * 60_000) return;
@@ -975,8 +995,11 @@ function scheduleIdle($: EngineInterface): void {
   S.idleTimer?.cancel();
   S.idleTimer = undefined;
   const k = S.cfg.compaction;
-  if (!S.cfg.enabled || !k.enabled || !k.onReturn || shadow()) return;
-  S.idleTimer = $.clock.after(S.cfg.router.cacheTtlMinutes * 60_000 + 30_000, () => {
+  if (!active() || !k.enabled || !idleCompaction() || shadow()) return;
+  // From the last request, so that switching `/jevg idle on` on later arms it for the right moment.
+  const since = S.route.lastRequestAt === undefined ? 0 : Date.now() - S.route.lastRequestAt;
+  const delay = Math.max(1000, S.cfg.router.cacheTtlMinutes * 60_000 + 30_000 - since);
+  S.idleTimer = $.clock.after(delay, () => {
     S.idleTimer = undefined;
     void compactIdle($, 'timer');
   });
@@ -1479,17 +1502,48 @@ async function startUi($: EngineInterface): Promise<string> {
   return `Could not start the UI. Run it yourself: node "${server}" --port ${S.cfg.ui.port}`;
 }
 
+/**
+ * `/jevg chat on|off`: the mod does nothing in this chat (no routing, compaction, trimming, requests to Jev).
+ * `/jevg idle on|off`: compact this chat after a pause even when the setting is off. Both belong to the chat.
+ */
+async function chatCommand($: EngineInterface, which: 'chat' | 'idle', arg: string): Promise<string> {
+  await loadConfig($, false);
+  const show = (): string =>
+    `This chat: mod ${S.chat.off ? 'OFF' : 'on'}; compaction after a pause ${S.cfg.compaction.onReturn ? 'on (setting)' : S.chat.idle ? 'on (this chat)' : 'off'}.`;
+  if (arg !== 'on' && arg !== 'off') return `${show()}\nUsage: /jevg ${which} on|off`;
+  const on = arg === 'on';
+  if (which === 'chat') {
+    S.chat = { ...S.chat, off: !on };
+    if (!on) {
+      S.turn = undefined;
+      S.idleTimer?.cancel();
+      S.idleTimer = undefined;
+      $.ui.status('jev ▸ off in this chat');
+    } else {
+      scheduleIdle($);
+      $.ui.status('jev ▸ on');
+    }
+  } else {
+    S.chat = { ...S.chat, idle: on };
+    scheduleIdle($);
+  }
+  await saveChat($);
+  await applyAutoWindow($, false);
+  await ledger($, { kind: 'chat', text: `/jevg ${which} ${arg}`, reasons: [`chat ${S.chat.off ? 'off' : 'on'}, idle ${S.chat.idle ? 'on' : 'off'}`] });
+  return `${show()}${which === 'chat' && !on ? ' Nothing is sent to Jev and nothing is changed until /jevg chat on.' : ''}`;
+}
+
 async function statusReport($: EngineInterface): Promise<string> {
   const budget = await pressureNow($);
   const cfg = S.cfg;
   const prev = S.route.previous;
   const lines = [
-    `jev-governor ${cfg.enabled ? `ON (${shadow() ? 'наблюдение' : 'active'})` : 'OFF'} · key ${S.key ? 'found' : 'MISSING'} · Jev ${cfg.jev.model}${isExcluded(cfg, S.cwd, S.home) ? ' · проект исключён: к Jev ничего не уходит' : ''}`,
+    `jev-governor ${cfg.enabled ? (S.chat.off ? 'OFF in this chat (/jevg chat on)' : `ON (${shadow() ? 'наблюдение' : 'active'})`) : 'OFF'} · key ${S.key ? 'found' : 'MISSING'} · Jev ${cfg.jev.model}${isExcluded(cfg, S.cwd, S.home) ? ' · проект исключён: к Jev ничего не уходит' : ''}`,
     `routing: main model ${cfg.router.mainModel ? 'on' : 'off'}, main effort ${cfg.router.mainEffort ? 'on' : 'off'}, subagents ${cfg.router.subagents ? 'on' : 'off'}; compaction ${cfg.compaction.enabled ? `on (at ${Math.round(cfg.compaction.compactAtTokens / 1000)}k${cfg.compaction.archive ? ', archive' : ''})` : 'off'}; handoff ${cfg.handoff.enabled ? 'on' : 'off'}`,
     `last: ${S.route.lastModel ? displayModel(S.route.lastModel) : '—'}${prev ? ` · ${prev.effort}` : ''} · budget ${budget.text || 'n/a'} (pressure ${budget.pressure})`,
     `agents: ${S.agents.size} (${[...S.agents.keys()].slice(0, 12).join(', ') || 'none yet'}) · skills: ${S.skills.size}`,
     `data: ${S.data}`,
-    'commands: /jevg status | on | off | ui | reload | fresh [--brief|--nobrief] [фокус] | getctx [--brief|--nobrief] [фокус] | ctx [list|<id>]',
+    'commands: /jevg status | on | off | chat on|off | idle on|off | ui | reload | fresh [--brief|--nobrief] [фокус] | getctx [--brief|--nobrief] [фокус] | ctx [list|<id>]',
   ];
   return lines.join('\n');
 }
@@ -1518,6 +1572,8 @@ async function bindSession($: EngineInterface, starting: boolean): Promise<void>
     await loadKey($);
     await applyAutoWindow($, true);
     await restoreRoute($);
+    await restoreChat($);
+    await applyAutoWindow($, false);
     await loadRegistry($);
     await registerAll($);
     void pruneOutputs($);
@@ -1526,8 +1582,8 @@ async function bindSession($: EngineInterface, starting: boolean): Promise<void>
     if (starting) void compactIdle($, 'resumed session');
     await $.command.register({
       name: 'jevg',
-      description: 'jev-governor: status, on, off, ui, reload; fresh — продолжить в этом окне с чистым чатом и капсулой; getctx — капсула для нового чата, ctx — подключить её',
-      argumentHint: '[status|on|off|ui|reload|fresh [фокус]|getctx [фокус]|ctx [list|id]]',
+      description: 'jev-governor: status, on, off, chat on|off (this chat only), idle on|off (compact after a pause in this chat), ui, reload; fresh — продолжить в этом окне с чистым чатом и капсулой; getctx — капсула для нового чата, ctx — подключить её',
+      argumentHint: '[status|on|off|chat on|off|idle on|off|ui|reload|fresh [фокус]|getctx [фокус]|ctx [list|id]]',
     });
     $.clock.every(8000, () => {
       void processDrafts($).then(() => processDescribe($)).catch(() => undefined);
@@ -1555,6 +1611,8 @@ async function rebindConversation($: EngineInterface): Promise<void> {
   resetConversation();
   await refreshCwd($);
   await restoreRoute($);
+  await restoreChat($);
+  await applyAutoWindow($, false);
 }
 
 /** Per-conversation state back to a new conversation's (what `/jevg fresh` set up to attach stays). */
@@ -1564,6 +1622,7 @@ function resetConversation(): void {
   S.handoff?.timer?.cancel();
   S.handoff = undefined;
   S.route = { freeSwitch: true };
+  S.chat = { off: false, idle: false };
   S.turn = undefined;
   S.subs.clear();
   S.pending = [];
@@ -1626,6 +1685,7 @@ export const register: Register = (on) => {
       await saveConfig($);
       return { text: `jev-governor ${arg === 'on' ? 'enabled' : 'disabled'}.` };
     }
+    if (sub === 'chat' || sub === 'idle') return { text: await chatCommand($, sub, raw.slice(sub.length).trim().toLowerCase()) };
     if (arg === 'ui') return { text: await startUi($) };
     if (arg === 'reload') {
       await loadConfig($, true);
@@ -1648,7 +1708,7 @@ export const register: Register = (on) => {
     await loadConfig($, false);
     await refreshCwd($);
     // The handoff brief runs on the chat's own model (turn.step): nothing to ask Jev.
-    if (!S.cfg.enabled || !jevKey() || brief) {
+    if (!active() || !jevKey() || brief) {
       S.turn = undefined;
       return next(e);
     }
@@ -1668,7 +1728,7 @@ export const register: Register = (on) => {
       S.route.lastRequestAt = Date.now();
       return yield* next(e.effort === undefined ? e : { ...e, effort: 'medium' });
     }
-    if (!S.cfg.enabled) return yield* next(e);
+    if (!active()) return yield* next(e);
 
     if (e.agentId !== undefined) {
       if (shadow()) return yield* next(e);
@@ -1813,7 +1873,7 @@ export const register: Register = (on) => {
       const edited = editedPath(tool, input);
       if (edited) delete S.route.pruned[`Read:${edited}`];
     }
-    if (tool === 'Bash' && S.cfg.enabled && S.cfg.projects.enabled && S.cfg.projects.learnFromClaude && S.cwd && result.deny === undefined) {
+    if (tool === 'Bash' && active() && S.cfg.projects.enabled && S.cfg.projects.learnFromClaude && S.cwd && result.deny === undefined) {
       const command = (e as unknown as { command?: unknown }).command;
       const seen = typeof command === 'string' ? normalizeObserved(command) : undefined;
       // The shell may have `cd`-ed into a subfolder: the command is the project's, run from there.
@@ -1849,7 +1909,7 @@ export const register: Register = (on) => {
 
   on('agent.spawn', async ($, e, next) => {
     await ensureInit($);
-    if (!S.cfg.enabled || !jevKey() || e.fork || (!S.cfg.router.subagents && !S.cfg.agents.enabled)) return next(e);
+    if (!active() || !jevKey() || e.fork || (!S.cfg.router.subagents && !S.cfg.agents.enabled)) return next(e);
     let plan: SpawnPlan | undefined;
     try {
       plan = await planSpawn($, e);
@@ -1955,7 +2015,7 @@ export const register: Register = (on) => {
         );
       });
     }
-    if (!S.cfg.enabled) return result;
+    if (!active()) return result;
     if (e.usage) {
       const rate = e.agentId === undefined ? (await pressureNow($)).rate : undefined;
       await ledger($, {
@@ -2008,7 +2068,7 @@ export const register: Register = (on) => {
 
   on('session.append', { door: 'tool-result' }, async ($, e, next) => {
     await ensureInit($);
-    if (!S.cfg.enabled || !S.cfg.trim.enabled) return next(e);
+    if (!active() || !S.cfg.trim.enabled) return next(e);
     let changed = false;
     const content: Record<string, unknown>[] = [];
     for (const block of e.message.content as Record<string, unknown>[]) {
@@ -2089,7 +2149,7 @@ export const register: Register = (on) => {
     };
     const k = S.cfg.compaction;
     const key = jevKey();
-    if (!S.cfg.enabled || !k.enabled || !key || shadow()) {
+    if (!active() || !k.enabled || !key || shadow()) {
       const result = await next(e);
       if (result.messages) markFree();
       return result;
