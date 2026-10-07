@@ -85,6 +85,8 @@ export type SubState = {
   /** What the subagent would have run on without the mod. */
   baseModel?: string;
   baseEffort?: Effort;
+  /** Its task (clipped): what Jev is told the subagent is doing when it judges one of its outputs. */
+  task?: string;
 };
 
 /** A spawn whose subagent id is not known yet (its first steps can run before `next` resolves). */

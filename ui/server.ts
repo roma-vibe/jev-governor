@@ -25,7 +25,7 @@ import type { AgentRecord, DraftRecord, GovernorConfig, LedgerEntry, SkillRecord
 import { pricable } from './lib/pricable.ts';
 import { createProjects, entriesOfProject } from './lib/projects.ts';
 
-const VERSION = '0.3.2';
+const VERSION = '0.3.3';
 const UI_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(UI_DIR);
 const DIST = path.join(UI_DIR, 'dist');
@@ -387,6 +387,8 @@ type LedgerStats = {
     applied: number;
     shadow: number;
     skipped: number;
+    /** Outputs Jev judged data, not a log: kept whole. */
+    logsData: number;
     charsBefore: number;
     charsAfter: number;
     saved: number;
@@ -424,6 +426,7 @@ function computeStats(entries: readonly LedgerEntry[], days: number): LedgerStat
       applied: 0,
       shadow: 0,
       skipped: 0,
+      logsData: 0,
       charsBefore: 0,
       charsAfter: 0,
       saved: 0,
@@ -498,7 +501,9 @@ function computeStats(entries: readonly LedgerEntry[], days: number): LedgerStat
     } else if (e.kind === 'trim' && isObject(e.trim)) {
       const t = stats.trims;
       t.count++;
-      if (e.applied === false && e.trim.skipped) {
+      if (e.applied === false && e.trim.kind === 'log' && typeof e.trim.skipped === 'string' && e.trim.skipped.startsWith('Jev')) {
+        t.logsData++;
+      } else if (e.applied === false && e.trim.skipped) {
         t.skipped++;
       } else if (e.applied === false) {
         t.shadow++;

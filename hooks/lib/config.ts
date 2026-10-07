@@ -69,6 +69,8 @@ export const DEFAULT_CONFIG: GovernorConfig = {
     maxPruneRatio: 0.8,
     resultPreviewChars: 150,
     autoWindowTokens: 250_000,
+    fold: true,
+    foldKeepTurns: 2,
   },
   handoff: {
     enabled: true,
@@ -87,6 +89,11 @@ export const DEFAULT_CONFIG: GovernorConfig = {
     minChars: 6_000,
     hugeChars: 40_000,
     listChars: 6_000,
+    briefChars: 2_000,
+    logs: 'shadow',
+    logChars: 3_000,
+    // Measured 2026-10-07: 29 real script/report outputs ≤ 0.29, realistic logs (push, deploy, compose, dev server) 0.55–0.73.
+    logAt: 0.5,
     headLines: 30,
     tailLines: 100,
     contextLines: 3,
@@ -247,6 +254,8 @@ export function resolveConfig(raw: unknown): GovernorConfig {
       resultPreviewChars: num(k.resultPreviewChars, d.compaction.resultPreviewChars, 0, 1_000),
       // Under ~100k the engine would compact every few steps.
       autoWindowTokens: Math.round(num(k.autoWindowTokens, d.compaction.autoWindowTokens, 0, 2_000_000)),
+      fold: bool(k.fold, d.compaction.fold),
+      foldKeepTurns: Math.round(num(k.foldKeepTurns, d.compaction.foldKeepTurns, 1, 50)),
     },
     handoff: {
       enabled: bool(h.enabled, d.handoff.enabled),
@@ -264,6 +273,10 @@ export function resolveConfig(raw: unknown): GovernorConfig {
       minChars: num(t.minChars, d.trim.minChars, 1_000, 1_000_000),
       hugeChars: num(t.hugeChars, d.trim.hugeChars, 5_000, 4_000_000),
       listChars: t.listChars === 0 ? 0 : num(t.listChars, d.trim.listChars, 1_000, 1_000_000),
+      briefChars: t.briefChars === 0 ? 0 : num(t.briefChars, d.trim.briefChars, 1_000, 1_000_000),
+      logs: t.logs === 'off' || t.logs === 'shadow' || t.logs === 'on' ? t.logs : d.trim.logs,
+      logChars: num(t.logChars, d.trim.logChars, 1_000, 1_000_000),
+      logAt: num(t.logAt, d.trim.logAt, 0.5, 1),
       headLines: num(t.headLines, d.trim.headLines, 0, 1_000),
       tailLines: num(t.tailLines, d.trim.tailLines, 0, 2_000),
       contextLines: num(t.contextLines, d.trim.contextLines, 0, 50),

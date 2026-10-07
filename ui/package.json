@@ -1,6 +1,6 @@
 {
   "name": "jev-governor-ui",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "private": true,
   "type": "module",
   "description": "Local settings UI for jev-governor",

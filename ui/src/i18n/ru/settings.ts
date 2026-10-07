@@ -190,6 +190,12 @@ export default {
   'On return, compact if at least this much is removed': 'При возвращении сжимать, если убирается не меньше',
   'After the cache expires the rewrite is unavoidable, so any savings are free: the threshold is low. Below it nothing is done.':
     'После истечения кэша перезапись неизбежна, поэтому любая экономия бесплатна: порог низкий. Ниже него ничего не делается.',
+  'Fold old dialog text at compaction': 'Сворачивать старый текст диалога при сжатии',
+  'Compaction itself only prunes tool calls, so in a long chat earlier answers, agent reports, monitor events and long pastes were carried through every compaction and written into the cache again each time. With this on, each compaction folds such messages older than the newest turns to their first lines plus a link to a file with the full text; Claude reads the file when it needs a detail. Jev keeps the messages the current work still relies on. On a long real chat this removed 35–67% of the dialog text per compaction; graded in hindsight, none of 380 folded messages was needed beyond its first lines.':
+    'Само сжатие убирает только вызовы инструментов, поэтому в длинном чате прежние ответы, отчёты агентов, события мониторов и длинные вставки проходили через каждое сжатие и каждый раз заново записывались в кэш. Когда включено, каждое сжатие сворачивает такие сообщения старше последних ходов до первых строк и ссылки на файл с полным текстом; нужна деталь — Claude прочитает файл. Сообщения, на которые опирается текущая работа, Jev оставляет. На длинном реальном чате это убирало 35–67% текста диалога за сжатие; при проверке задним числом ни одно из 380 свёрнутых сообщений не понадобилось дальше первых строк.',
+  'Never fold the newest turns': 'Не сворачивать последние ходы',
+  'How many of your newest prompts, with everything after them, always stay verbatim.':
+    'Сколько ваших последних сообщений вместе со всем, что после них, всегда остаются дословно.',
   'Save removed content to an archive': 'Сохранять убранное в архив',
   'Every removed call (input and full output) is saved to a file, and a link to it stays in the context. If an old detail is needed, Claude reads it from the file instead of running it again. Archive reads appear in the journal as output-read. Kept for 7 days, with the same overall limit as trimmed outputs.':
     'Каждый убранный вызов (вход и полный вывод) сохраняется в файл, а в контексте остаётся ссылка на него. Нужна старая деталь — Claude прочитает её из файла вместо повторного запуска. Чтения архива видны в журнале как output-read. Хранится 7 дней, общий лимит как у обрезанных выводов.',
@@ -369,4 +375,22 @@ export default {
   'The project panel with its commands, and how the savings are counted.': 'Панель проектов с командами и подсчёт экономии.',
   '{n} {n#section|sections}': '{n} {n#раздел|раздела|разделов}',
   '{n} {n#setting|settings}': '{n} {n#настройка|настройки|настроек}',
+  'Successful tests and builds: short trim from':
+    'Успешные тесты и сборки: короткая обрезка от',
+  'A successful test, build or install run (npm test, cargo build, tsc…) longer than this but shorter than the test log limit keeps only the outcome, the summary, the warnings and the first and last lines; the full output is in a file. A run with any failure line, a failed run and a run Claude already filtered (| tail, | grep) stay whole. 0 means never.':
+    'Успешный запуск тестов, сборки или установки (npm test, cargo build, tsc…) длиннее этого, но короче порога для логов тестов, сокращается до итога, сводки, предупреждений и первых и последних строк; полный вывод лежит в файле. Запуск с любой строкой об ошибке, упавший запуск и вывод, который Claude уже отфильтровал сам (| tail, | grep), остаются целиком. 0 — никогда.',
+  'Logs of other commands (Jev decides)':
+    'Логи других команд (решает Jev)',
+  'Output of other commands (a script, a server, a deploy, git push, a polling loop) longer than the limit below goes to Jev with one question: is this a log, where only the outcome, errors and key lines matter, or data Claude ran the command to get? Only a log is trimmed: its start and end, errors and warnings, lines with addresses and launch or finish status remain, repeats that differ only in numbers are counted. Reads (cat, sed, grep, git diff), inline scripts (python3 -c), outputs Claude filtered itself (| tail, | grep) and failed commands are never offered. In shadow mode Jev\'s verdict is only recorded.':
+    'Вывод других команд (скрипт, сервер, деплой, git push, цикл ожидания) длиннее порога ниже уходит к Jev с одним вопросом: это лог, где важны только итог, ошибки и ключевые строки, или данные, ради которых Claude запускал команду? Обрезается только лог: остаются начало и конец, ошибки и предупреждения, строки с адресами и статусом запуска или завершения, а повторы, отличающиеся только числами, заменяются счётчиком. Чтение файлов (cat, sed, grep, git diff), встроенные скрипты (python3 -c), выводы, которые Claude отфильтровал сам (| tail, | grep), и упавшие команды к Jev не попадают никогда. В режиме наблюдения решение Jev только записывается.',
+  'Shadow (only record what Jev decides)':
+    'Наблюдение (только записывать решение Jev)',
+  'Log check: from size':
+    'Проверка на лог: от размера',
+  'Command outputs shorter than this are not offered to Jev as possible logs.':
+    'Выводы короче этого не отправляются к Jev как возможные логи.',
+  'Log check: probability threshold':
+    'Проверка на лог: порог вероятности',
+  'An output is trimmed as a log only if Jev\'s probability that it is a log is at least this. Measured on 7 October: real script and report outputs got at most 0.29, real logs (push, deploy, docker compose, dev server) 0.55–0.80. Higher means safer and rarer.':
+    'Вывод обрезается как лог, только если вероятность «это лог» по оценке Jev не ниже этого значения. Замер 7 октября: реальные выводы скриптов и отчётов получили не больше 0,29, реальные логи (push, деплой, docker compose, dev-сервер) — 0,55–0,80. Выше — безопаснее и реже.',
 } as Record<string, string>;

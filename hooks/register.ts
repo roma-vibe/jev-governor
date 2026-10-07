@@ -30,14 +30,16 @@ import {
   type CapsuleMessage,
   type CapsuleMeta,
 } from './lib/capsule.ts';
-import { runCompaction, summarizeCompaction } from './lib/compaction/adapter.ts';
+import { planFolds, runCompaction, summarizeCompaction } from './lib/compaction/adapter.ts';
+import { messageChars } from './lib/compaction/compact.ts';
+import { applyFolds, DEFAULT_FOLD_OPTIONS, foldArchiveText, foldFileName, foldStats, type FoldOptions } from './lib/compaction/fold.ts';
 import { resolveLang, systemLocales } from './lib/lang.ts';
 import { expandHome, isExcluded, resolveConfig } from './lib/config.ts';
 import { clip, estimateContextTokens, recentHistory, type HistoryMessage } from './lib/history.ts';
 import { choice, jevAsker, noul, withTimeout, type JevAsker, type JevQuestions, type JevResponse } from './lib/jev.ts';
 import { displayModel } from './lib/providers.ts';
 import { redact } from './lib/redact.ts';
-import { chunkQuestions, isClaudeSavedOutput, isRunnerCommand, persistedOutputPath, MIN_TRIM_GAIN, planTrim, renderTrim, trimKind, worthTrimming, type Chunk } from './lib/trim.ts';
+import { chunkQuestions, isClaudeSavedOutput, isLogCandidate, isRunnerCommand, LOG_KEY_LINES, logQuestion, persistedOutputPath, MIN_TRIM_GAIN, planTrim, renderTrim, trimKind, worthTrimming, type Chunk } from './lib/trim.ts';
 import { commandDir, describePrompt, describeSystem, normalizeObserved, parseDescriptions } from './lib/commands.ts';
 import {
   agentQuestion,
@@ -878,9 +880,111 @@ async function trimResult(
     trimmed.entry.trim = { ...trimmed.entry.trim!, charsBefore: text.length, persisted: true, fullChars: full.length };
     return trimmed;
   }
-  const kind = trimKind(tool, call?.command, text, t);
-  if (!kind) return undefined;
-  return trimFull($, toolUseId, text, isError, undefined, kind === 'list' ? LIST_TRIM : undefined);
+  const kind = trimKind(tool, call?.command, text, t, isError);
+  if (!kind) {
+    const logLike = tool === 'Bash' && !isError && t.logs !== 'off' && text.length >= t.logChars && text.length < t.hugeChars && isLogCandidate(call?.command);
+    return logLike ? trimLog($, toolUseId, text) : undefined;
+  }
+  const trimmed = await trimFull($, toolUseId, text, isError, undefined, kind === 'list' ? LIST_TRIM : kind === 'brief' ? BRIEF_TRIM : undefined);
+  if (kind !== 'brief') return trimmed;
+  // A short run that a brief trim barely shortens is not worth a ledger line.
+  if (!trimmed || trimmed.entry.trim?.skipped) return undefined;
+  trimmed.entry.trim = { ...trimmed.entry.trim!, kind: 'brief' };
+  return trimmed;
+}
+
+/** What Jev is told the work is: the subagent's task inside a subagent, else the user's request. */
+function taskFor(call: { agentId?: string } | undefined): string {
+  const sub = call?.agentId ? S.subs.get(call.agentId)?.task : undefined;
+  return sub ?? clip(S.turn?.text ?? '', 1500, 300);
+}
+
+/** Settings for a log: its start, its end, every error and warning; Jev may put middle parts back. */
+const LOG_TRIM = { headLines: 10, tailLines: 30, contextLines: 2, maxChars: 5000, keepLines: LOG_KEY_LINES, collapseSimilar: true } as const;
+/** What the header of a log trim says it was. */
+const LOG_REASON = 'Jev judged this output a log (progress and status lines), not data asked for.';
+
+/**
+ * A command output that may be a log (`isLogCandidate`): Jev is asked in one request
+ * whether it is a log or data the assistant asked for, and which omitted parts still
+ * matter. Trimmed only when it is a log with probability `logAt` or more and the trim
+ * removes MIN_TRIM_GAIN; any doubt, a failed request or nothing to gain keeps it
+ * whole. In `shadow` mode the verdict is logged and nothing is cut.
+ */
+async function trimLog(
+  $: EngineInterface,
+  toolUseId: string,
+  text: string,
+): Promise<{ text: string; entry: Omit<LedgerEntry, 'ts' | 'session'> } | undefined> {
+  const t = { ...S.cfg.trim, ...LOG_TRIM };
+  const call = S.calls.get(toolUseId);
+  if (!jevKey()) return undefined;
+  const plan = planTrim(text, false, t);
+  // The least a trim keeps: when even that saves too little, Jev is not asked.
+  if (!worthTrimming(text.length, renderTrim(plan, { settings: t, originalChars: text.length }).charsAfter)) return undefined;
+  const chunks: Chunk[] = plan.candidates.slice(0, 20);
+  const asked = await askJev(
+    $,
+    {
+      context:
+        'A coding assistant ran a shell command. If its output is only a log, it is trimmed before it enters the conversation: kept_output stays, omitted_chunks are dropped unless needed, and the full output is saved to a file the assistant can search.',
+      task: taskFor(call),
+      command: clip(call?.command ?? 'Bash', 600),
+      output: clip(text, 6000, 3000),
+      kept_output: clip(renderTrim(plan, { settings: t, originalChars: text.length }).text, 5000, 2000),
+      omitted_chunks: Object.fromEntries(chunks.map((c) => [c.id, c.text])),
+    },
+    { ...logQuestion(), ...chunkQuestions(chunks) },
+    undefined,
+    'trim',
+  );
+  if (!asked) return undefined;
+  const logProb = noul(asked.response.answers, 'is_log') ?? 0;
+  const approved = new Set(chunks.filter((c) => (noul(asked.response.answers, `need_${c.id}`) ?? 1) >= t.jevKeepAt).map((c) => c.id));
+  const isLog = logProb >= S.cfg.trim.logAt;
+  const live = S.cfg.trim.logs === 'on' && !shadow();
+  const would = renderTrim(plan, { approved, fullPath: `${outputsDir()}/${toolUseId}.txt`, settings: t, originalChars: text.length, reason: LOG_REASON });
+  const worth = worthTrimming(text.length, would.charsAfter);
+  const skipped = !isLog ? `Jev: data, not a log (${logProb.toFixed(2)})` : !worth ? `removes under ${Math.round(MIN_TRIM_GAIN * 100)}%` : undefined;
+  let applied = live && skipped === undefined;
+  let path: string | undefined;
+  if (applied) {
+    path = `${outputsDir()}/${toolUseId}.txt`;
+    try {
+      await $.fs.write(path, text);
+    } catch {
+      // No saved copy, no trim: what is cut must stay one search away.
+      applied = false;
+      path = undefined;
+    }
+  }
+  const out = applied ? renderTrim(plan, { approved, fullPath: path, settings: t, originalChars: text.length, reason: LOG_REASON }) : would;
+  return {
+    text: out.text,
+    entry: {
+      kind: 'trim',
+      scope: call?.agentId ? 'subagent' : 'main',
+      agentId: call?.agentId,
+      applied,
+      jevMs: asked.ms,
+      jevCost: asked.response.usage?.cost,
+      text: clip(call?.command ?? 'Bash', 160),
+      trim: {
+        tool: 'Bash',
+        command: call?.command ? clip(call.command, 200) : undefined,
+        charsBefore: text.length,
+        charsAfter: out.charsAfter,
+        linesBefore: out.linesBefore,
+        linesAfter: out.linesAfter,
+        outcome: out.outcome.detail,
+        jevChunks: out.jevChunks,
+        path,
+        kind: 'log',
+        logProb: Math.round(logProb * 100) / 100,
+        ...(skipped ? { skipped } : {}),
+      },
+    },
+  };
 }
 
 /** Settings for a short trim: the outcome, summary and signal lines, little else. */
@@ -922,7 +1026,7 @@ async function trimFull(
       {
         context:
           'A coding assistant ran a tool; its long output is being trimmed before it enters the conversation. kept_output is what stays; omitted_chunks would be dropped (the full output stays readable in a file).',
-        task: clip(S.turn?.text ?? '', 1500, 300),
+        task: taskFor(call),
         command: clip(call?.command ?? tool, 400),
         kept_output: clip(preview.text, 6000, 2000),
         omitted_chunks: Object.fromEntries(chunks.map((c) => [c.id, c.text])),
@@ -1158,6 +1262,66 @@ async function archivePruned(
   return {
     messages: withPointers(original, compacted, pruned, paths, S.cfg.compaction.truncateHeadChars, index),
     archived: saved.length,
+  };
+}
+
+/**
+ * Folds old dialog text in what a compaction keeps (./lib/compaction/fold.ts). Pruning only ever
+ * touches tool calls, so earlier answers, agent results, monitor events and long pastes were
+ * carried through every compaction and re-written into the cache each time (in long chats most of
+ * what a compaction left). Jev keeps what the work still depends on; every other candidate keeps
+ * its first lines and points at its full text under outputs/<session>/folded/, which the model
+ * reads back when it needs it (a message whose file could not be written stays whole).
+ */
+async function foldDialog(
+  $: EngineInterface,
+  messages: readonly Message[],
+  asker: JevAsker,
+  keepTurns: number,
+): Promise<{ messages: Message[]; folded?: NonNullable<LedgerEntry['compaction']>['folded'] }> {
+  const k = S.cfg.compaction;
+  const previewFilter = (text: string): string => redact(text).text;
+  const options: FoldOptions = {
+    ...DEFAULT_FOLD_OPTIONS,
+    keepTurns,
+    preserveRecentMessages: k.preserveRecentMessages,
+    maxRequestTokens: k.maxRequestTokens,
+    previewFilter,
+  };
+  const { decisions, requests } = await planFolds(
+    messages,
+    asker,
+    {
+      preserveRecentMessages: k.preserveRecentMessages,
+      truncateHeadChars: k.truncateHeadChars,
+      maxStateTokens: k.maxStateTokens,
+      maxRequestTokens: k.maxRequestTokens,
+      previewFilter,
+    },
+    options,
+  );
+  if (decisions.length === 0) return { messages: [...messages] };
+  const dir = `${outputsDir()}/folded`;
+  const paths = new Map<number, string>();
+  await Promise.all(
+    decisions
+      .filter((decision) => decision.fold)
+      .map(async (decision) => {
+        const text = messages[decision.index]?.text ?? '';
+        const path = `${dir}/${foldFileName(text)}`;
+        try {
+          if (!(await $.fs.exists(path))) await $.fs.write(path, foldArchiveText(text, decision));
+          paths.set(decision.index, path);
+        } catch {
+          // stays whole
+        }
+      }),
+  );
+  const out = applyFolds(messages, decisions, paths, options.headChars);
+  const stats = foldStats(decisions, messages, out);
+  return {
+    messages: out,
+    folded: { candidates: stats.candidates, folded: stats.folded, chars: stats.charsSaved, requests, byKind: stats.byKind },
   };
 }
 
@@ -2105,6 +2269,7 @@ export const register: Register = (on) => {
           errors: 0,
           steps: 0,
           baseModel: e.model ?? e.parentModel,
+          task: clip(e.prompt, 1500, 300),
         }
       : undefined;
     const pending: PendingSpawn | undefined = sub ? { promptKey: promptKey(plan.prompt), sub, at: Date.now() } : undefined;
@@ -2339,7 +2504,7 @@ export const register: Register = (on) => {
     };
     let fallback = '';
     try {
-      const { result, messages, ratio } = await runCompaction(e.messages, asker, {
+      const { result, messages: pruned0 } = await runCompaction(e.messages, asker, {
         keepThreshold: k.keepThreshold,
         preserveRecentMessages: k.preserveRecentMessages,
         truncateHeadChars: k.truncateHeadChars,
@@ -2360,13 +2525,28 @@ export const register: Register = (on) => {
             : byWindow
               ? 'window'
               : 'engine';
+      // Then the old dialog text.
+      let messages: readonly Message[] = pruned0;
+      let folded: NonNullable<LedgerEntry['compaction']>['folded'];
+      if (k.fold) {
+        try {
+          ({ messages, folded } = await foldDialog($, pruned0, asker, k.foldKeepTurns));
+        } catch (error) {
+          await ledger($, { kind: 'error', error: `fold: ${errorText(error)}` });
+        }
+      }
+      const charsAfter = folded?.folded ? messages.reduce((sum, message) => sum + messageChars(message), 0) : result.stats.charsAfter;
+      const { charsBefore } = result.stats;
+      const ratio = charsBefore === 0 ? 0 : (charsBefore - charsAfter) / charsBefore;
+      const summary = summarizeCompaction(result, folded ? { folded: folded.folded, requests: folded.requests, ratio } : undefined);
       const stats = {
-        charsBefore: result.stats.charsBefore,
-        charsAfter: result.stats.charsAfter,
+        charsBefore,
+        charsAfter,
         ratio,
-        requests: result.stats.requests,
+        requests: result.stats.requests + (folded?.requests ?? 0),
         reason,
         ...(result.stats.restored ? { restored: result.stats.restored } : {}),
+        ...(folded && folded.candidates > 0 ? { folded } : {}),
         ...(e.agentId === undefined && S.compactVia ? { via: S.compactVia } : {}),
         trigger: e.trigger,
       };
@@ -2393,13 +2573,13 @@ export const register: Register = (on) => {
         await ledger($, {
           kind: 'compact',
           ...who,
-          text: summarizeCompaction(result),
+          text: summary,
           compaction: { ...stats, archived },
           jevCost,
           jevMs: Date.now() - startedAt,
           model: e.agentId === undefined ? S.route.lastModel : subModel(e.agentId),
         });
-        $.ui.toast(`jev-governor: compacted without a summary (${summarizeCompaction(result)})`, { timeoutMs: 8000 });
+        $.ui.toast(`jev-governor: compacted without a summary (${summary})`, { timeoutMs: 8000 });
         return { messages: kept as typeof e.messages };
       }
       fallback = `reduction ${Math.round(ratio * 100)}% below ${Math.round(minimum * 100)}%`;

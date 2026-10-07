@@ -138,6 +138,14 @@ export type GovernorConfig = {
      * environment, your value wins.
      */
     autoWindowTokens: number;
+    /**
+     * Fold old dialog text at every compaction: earlier answers, agent results, monitor events and
+     * long pastes keep their first lines and point at their archived full text (outputs/<session>/
+     * folded/). Jev keeps what the work still depends on.
+     */
+    fold: boolean;
+    /** The newest prompts whose turns are never folded. */
+    foldKeepTurns: number;
   };
   /** Moving the work to a new chat with a compact capsule instead of the whole history. */
   handoff: {
@@ -167,6 +175,17 @@ export type GovernorConfig = {
     hugeChars: number;
     /** A listing (ls, du, ps, find… with filters) longer than this is shortened to its first and last rows; 0 = never. */
     listChars: number;
+    /** A successful test / build / install run between this and minChars is cut to its outcome, summary and warnings (no Jev); 0 = never. */
+    briefChars: number;
+    /**
+     * Other command outputs (a script, a server, a deploy, git push, a polling loop) from logChars up:
+     * Jev judges whether it is a log or data the assistant asked for, and a log is trimmed.
+     * `shadow`: Jev is asked and its verdict logged, nothing is cut.
+     */
+    logs: 'off' | 'shadow' | 'on';
+    logChars: number;
+    /** Jev probability of "a log" from which it is trimmed (high = trims less). */
+    logAt: number;
     headLines: number;
     tailLines: number;
     /** Lines kept around each error / warning / failure line. */
@@ -342,6 +361,8 @@ export type LedgerEntry = {
     archived?: number;
     /** Calls put back because Jev would have removed more than `maxPruneRatio`. */
     restored?: number;
+    /** Old dialog messages folded (Jev asked about `candidates`; `chars` folded away; outputs/<session>/folded/). */
+    folded?: { candidates: number; folded: number; chars: number; requests: number; byKind: Record<string, number> };
     /** How our own compaction was started: `$.session.compact` or the `/compact` command (the desktop app). */
     via?: 'api' | 'command';
     /** Claude Code's trigger; `precompute` installs nothing (computed ahead for the compaction that comes). */
@@ -386,8 +407,10 @@ export type LedgerEntry = {
     persisted?: boolean;
     /** The full output's size then (charsBefore is the preview that would have entered). */
     fullChars?: number;
-    /** `list`: a long listing (ls, du, ps, find…) shortened to its first and last rows. */
-    kind?: 'list';
+    /** `list`: a long listing shortened to its first and last rows; `brief`: a successful test or build cut to its outcome; `log`: an output Jev judged to be a log. */
+    kind?: 'list' | 'brief' | 'log';
+    /** `log`: Jev's probability that the output is a log, not data. */
+    logProb?: number;
     /** Why the output stayed whole although it qualified (the entry is then not applied). */
     skipped?: string;
   };

@@ -5,7 +5,11 @@ import {
   detectOutcome,
   isClaudeSavedOutput,
   isListingCommand,
+  isLogCandidate,
   isRunnerCommand,
+  isTestOrBuildCommand,
+  LOG_KEY_LINES,
+  looksSuccessful,
   persistedOutputPath,
   planTrim,
   renderTrim,
@@ -231,5 +235,74 @@ describe('Claude Code persisted output', () => {
     expect(isRunnerCommand('cargo build --release')).toBe(true);
     expect(isRunnerCommand('cat build.log')).toBe(false);
     expect(isRunnerCommand(undefined)).toBe(false);
+  });
+
+  it('offers to Jev as a possible log only what was not run to read or print data', () => {
+    // Runs whose output may be a log.
+    expect(isLogCandidate('git push -u origin main')).toBe(true);
+    expect(isLogCandidate('./scripts/deploy.sh prod')).toBe(true);
+    expect(isLogCandidate('docker compose up -d && docker compose logs --tail=200')).toBe(true);
+    expect(isLogCandidate('cd app && echo "== start"; node server.js')).toBe(true);
+    // Reads, inline scripts, queries, listings: what the assistant asked to see.
+    expect(isLogCandidate('cat /tmp/dev.log')).toBe(false);
+    expect(isLogCandidate('sed -n 1,200p src/main.ts')).toBe(false);
+    expect(isLogCandidate('git diff HEAD~1')).toBe(false);
+    expect(isLogCandidate("python3 -c 'import json; print(json.load(open(\"a.json\")))'")).toBe(false);
+    expect(isLogCandidate("python3 - <<'EOF'\nprint(1)\nEOF")).toBe(false);
+    expect(isLogCandidate('for f in a b; do cat $f; done')).toBe(false);
+    expect(isLogCandidate('ls -la')).toBe(false);
+    // Cut down through a pipe: the assistant already chose what to see.
+    expect(isLogCandidate('node bench.js | tail -40')).toBe(false);
+    expect(isLogCandidate('curl -s https://x | jq .items')).toBe(false);
+    expect(isLogCandidate('cd x; mkdir -p y')).toBe(false);
+    expect(isLogCandidate(undefined)).toBe(false);
+  });
+
+  it('cuts short only an unfiltered successful test or build run', () => {
+    expect(isTestOrBuildCommand('npm test')).toBe(true);
+    expect(isTestOrBuildCommand('cd crates && cargo test -p core')).toBe(true);
+    expect(isTestOrBuildCommand('npm run build')).toBe(true);
+    expect(isTestOrBuildCommand('npm run report')).toBe(false);
+    expect(isTestOrBuildCommand('cargo run --example talk')).toBe(false);
+    expect(isTestOrBuildCommand('npm test 2>&1 | tail -80')).toBe(false);
+    const pass = ['', '> app@1.0.0 test', '> vitest run', '', ...Array.from({ length: 80 }, (_, i) => ` ✓ tests/case${i}.test.ts (4 tests) 3ms`), '', ' Test Files  80 passed (80)', '      Tests  320 passed (320)', '   Duration  1.2s'].join('\n');
+    expect(looksSuccessful(pass)).toBe(true);
+    expect(trimKind('Bash', 'npm test', pass, { ...S, briefChars: 2000 })).toBe('brief');
+    expect(trimKind('Bash', 'npm test', pass, { ...S, briefChars: 2000 }, true)).toBeUndefined();
+    expect(trimKind('Bash', 'npm test', pass, { ...S, briefChars: 0 })).toBeUndefined();
+    // Exit 0 can hide a failure (`npm test; echo done`): its lines decide.
+    const hidden = pass.replace(' ✓ tests/case3.test.ts (4 tests) 3ms', ' × tests/case3.test.ts > keeps totals\nAssertionError: expected 3 to be 4');
+    expect(looksSuccessful(hidden)).toBe(false);
+    expect(trimKind('Bash', 'npm test; echo done', hidden, { ...S, briefChars: 2000 })).toBeUndefined();
+    expect(looksSuccessful('test result: ok. 12 passed; 0 failed; 0 ignored')).toBe(true);
+  });
+
+  it('a log keeps its key lines and collapses repeats that differ only in numbers', () => {
+    const lines = [
+      'Enumerating objects: 214, done.',
+      ...Array.from({ length: 101 }, (_, i) => `Writing objects: ${i}% (${i}/150), ${i * 12} KiB | 2.1 MiB/s`),
+      ...Array.from({ length: 40 }, (_, i) => `db-1 | LOG: checkpoint starting ${i}`),
+      'api-1 | Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)',
+      ...Array.from({ length: 40 }, (_, i) => `db-1 | LOG: checkpoint starting ${i + 40}`),
+      'warning: something odd 1',
+      'warning: something odd 2',
+      'warning: something odd 3',
+      'warning: something odd 4',
+      'To github.com:me/app.git',
+      ' * [new branch]      main -> main',
+    ];
+    const settings = { ...S, headLines: 10, tailLines: 30, contextLines: 2, maxChars: 5000, keepLines: LOG_KEY_LINES, collapseSimilar: true };
+    const plan = planTrim(lines.join('\n'), false, settings);
+    const out = renderTrim(plan, { settings, originalChars: lines.join('\n').length, fullPath: '/saved.txt', reason: 'Jev judged this output a log.' });
+    expect(out.text).toContain('Jev judged this output a log.');
+    expect(out.text).toContain('Uvicorn running on http://0.0.0.0:8000');
+    expect(out.text).toContain('Writing objects: 0%');
+    expect(out.text).toContain('Writing objects: 100%');
+    expect(out.text).not.toContain('Writing objects: 50%');
+    expect(out.text).toMatch(/repeats of the line before \(other numbers\)/);
+    // Signal lines are never collapsed.
+    for (let i = 1; i <= 4; i++) expect(out.text).toContain(`warning: something odd ${i}`);
+    expect(out.text).toContain('[new branch]      main -> main');
+    expect(out.charsAfter).toBeLessThan(lines.join('\n').length / 3);
   });
 });

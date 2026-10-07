@@ -222,6 +222,47 @@ with the monitor after a day of work ("Окно автосжатия" (autocompa
 subagents are still not compacted, the variable does not apply to them: then it is needed in
 `env` of `~/.claude/settings.json` (a new process is required).
 
+## 7. Folding old dialog text (0.4.0)
+
+Compaction (the vendored library) only ever touches tool calls. In a long chat
+the text around them piles up: earlier answers, agent reports repeated whole in
+`<task-notification>`, monitor events, long pastes. One long chat
+carried ~96k tokens of it and wrote it into the cache again at each of its 67
+compactions; the floor after a compaction rose from 130k to 211k over the day.
+
+At every compaction (ours, Claude Code's, mid-turn, in subagents) the mod now
+also folds old dialog messages: a folded message keeps its first lines (300
+chars; a monitor event 120) and a pointer to `outputs/<session>/folded/`
+where the full text is. A notification keeps its envelope (task id, status,
+summary); only its result or event body folds.
+
+- Candidates: older than the newest `compaction.foldKeepTurns` prompts (2), or
+  a notification a newer one of the same task supersedes; answers and agent
+  results of 800+ chars, pastes of 3000+, monitor events whose body would
+  shrink by at least 250 chars; never the first message, the pinned newest
+  messages, or text folded before.
+- Jev is asked one `noul` per candidate ("must stay verbatim", with the start
+  and end of the text, secrets filtered), batched next to the same state the
+  call questions get. A candidate folds below a cut-off of its kind (answer
+  0.3, agent 0.25, monitor/task 0.35, paste 0.2: a user's own words fold only
+  when Jev is quite sure). If Jev fails, the compaction goes on without folds.
+- Checked in hindsight: 10 packets of a long chat (380 candidates)
+  were graded by a separate model against what the chat actually did until the
+  next compaction. None needed more than the first 300 chars (grades: 0 —
+  unused 87%, 1 — related, head enough 13%). Jev's keep probability ranked the
+  related ones first (AUC 0.84), so the cut-offs above fold ~80% of the text
+  and keep about half of the related messages whole.
+- Replay with live Jev on 11 compaction points of that chat: 64–150k chars
+  folded per compaction (35–67% of the dialog text, 8–27% of everything),
+  2–7 Jev requests, 0.5–1 s, ~$0.005 per compaction.
+- Settings: `compaction.fold` (on), `compaction.foldKeepTurns` (2). The ledger's
+  `compact` entry carries `compaction.folded`.
+
+What did not work: asking Jev up front which parts of a fresh file read the
+model will use (AUC 0.55–0.65 against later use, barely above random), and
+compacting as soon as Jev sees a new task (`new_topic` ≥ 0.8 fired on 8 of 298
+turns, at least 2 of them follow-ups such as "explain this").
+
 ## What next
 
 - A/B on a long session: one task, continued in the old chat and via

@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveConfig } from '../hooks/lib/config.ts';
+import { MOD_VERSION } from '../hooks/lib/version.ts';
 import { register } from '../hooks/register.ts';
 
 type Handler = (...args: any[]) => any;
@@ -363,6 +364,52 @@ describe('jev-governor hooks against a fake engine', () => {
     const lines = files.get(`${DATA}/outputs/compact-session/pruned/index.md`)!.split('\n').filter((l) => l.includes('u1.txt'));
     expect(lines).toHaveLength(2);
     expect(lines[1]).toContain('call removed · output archived earlier');
+  });
+
+  it('a compaction folds old answers and agent results to their first lines and archives their full text', async () => {
+    const config = JSON.parse(files.get(`${DATA}/config.json`)!);
+    config.compaction.preserveRecentMessages = 2;
+    files.set(`${DATA}/config.json`, JSON.stringify(config));
+    await startSession('fold-session');
+    const report = `Отчёт по проекту.\n${'подробность '.repeat(300)}`;
+    const agent = `<task-notification>\n<task-id>ag1</task-id>\n<status>completed</status>\n<summary>Agent "аудит" finished</summary>\n<result>Итоги аудита: ${'находка '.repeat(400)}</result>\n</task-notification>`;
+    const history = [
+      { role: 'user', text: 'Проанализируй проект', toolUses: [] },
+      { role: 'assistant', text: report, toolUses: [] },
+      { role: 'user', text: agent, toolUses: [] },
+      { role: 'user', text: 'Теперь почини сборку', toolUses: [] },
+      { role: 'assistant', text: '', toolUses: [{ tool_use_id: 'f1', tool: 'Bash', input: { command: 'npm run build' } }] },
+      { role: 'user', text: '', toolUses: [], toolResults: [{ tool_use_id: 'f1', text: 'ok' }] },
+      { role: 'assistant', text: 'Сборка зелёная.', toolUses: [] },
+      { role: 'user', text: 'И тесты', toolUses: [] },
+      { role: 'assistant', text: 'Тесты зелёные.', toolUses: [] },
+    ].map((m, i) => ({ ...m, handle: `h${i}` }));
+    const result = await emit('session.compact', { trigger: 'manual', messages: history }, async () => ({ skip: 'core' }));
+    expect(result.messages).toBeDefined();
+    const [answer, notice] = [result.messages[1].text as string, result.messages[2].text as string];
+    expect(answer.startsWith('[jev-governor folded')).toBe(true);
+    expect(answer).toContain('Отчёт по проекту.');
+    expect(answer.length).toBeLessThan(600);
+    expect(notice).toContain('<task-id>ag1</task-id>');
+    expect(notice).toMatch(/<result>\[jev-governor folded \d+ chars/);
+    const path = /full text is in (\S+)/.exec(answer)![1]!;
+    expect(path.startsWith(`${DATA}/outputs/fold-session/folded/`)).toBe(true);
+    expect(files.get(path)).toContain(report);
+    // The newest turns and the first prompt are left as they were.
+    expect(result.messages[0]).toBe(history[0]);
+    expect(result.messages.slice(3).map((m: any) => m.text)).toEqual(history.slice(3).map((m) => m.text));
+    const entry = [...files.entries()]
+      .filter(([p]) => p.endsWith('fold-session.jsonl'))
+      .flatMap(([, t]) => t.split('\n').filter(Boolean).map((l) => JSON.parse(l)))
+      .find((e) => e.kind === 'compact');
+    expect(entry.compaction.folded).toMatchObject({ candidates: 2, folded: 2, byKind: { answer: 1, agent: 1 } });
+    expect(entry.compaction.ratio).toBeGreaterThan(0.8);
+    expect(entry.text).toContain('2 old message(s) folded');
+
+    // A second compaction leaves folded text alone.
+    const again = (result.messages as any[]).map((m, i) => ({ ...m, handle: m.handle ?? `r${i}` }));
+    const second = await emit('session.compact', { trigger: 'manual', messages: again }, async () => ({ skip: 'core' }));
+    expect(second.messages?.[1]?.text ?? again[1].text).toBe(answer);
   });
 
   it('the auto-compaction window: set for the process, a value of yours kept, compactions in subagents priced as ours', async () => {
@@ -984,7 +1031,7 @@ describe('jev-governor hooks against a fake engine', () => {
     expect(JSON.parse(files.get(`${DATA}/agents/packet-grader.json`)!).uses).toBe(2);
     const ledger = [...files.entries()].filter(([p]) => p.endsWith('spawn-session.jsonl')).flatMap(([, t]) => t.split('\n').filter(Boolean).map((l) => JSON.parse(l)));
     expect(ledger.filter((e) => e.kind === 'agent-created')).toHaveLength(1);
-    expect(ledger.every((e) => e.v === '0.3.2')).toBe(true);
+    expect(ledger.every((e) => e.v === MOD_VERSION)).toBe(true);
 
     // Full registry: the long-idle specialist is turned off to make room for the new draft.
     const config = JSON.parse(files.get(`${DATA}/config.json`)!);

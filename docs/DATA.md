@@ -18,6 +18,7 @@ projects/<id>.json          ProjectRecord: a project page's commands (written by
 describe/<id>.json          DescribeRequest: command descriptions an open session writes
 outputs/<session>/<id>.txt  full tool outputs that were trimmed (7 days / 200 MB)
 outputs/<session>/pruned/<tool_use_id>.txt   calls a compaction pruned: input + full output (same caps)
+outputs/<session>/folded/<hash>-<chars>.md   old dialog messages a compaction folded: full text
 outputs/<session>/pruned/index.md            one line per pruned call, newest last
 handoffs/<id>.md            a capsule for a new chat (/jevg getctx, /jevg fresh); kept handoff.keepDays (30)
 handoffs/<id>.json          its record: id, cwd, session, title, focus, tokens, sourceTokens, turns, brief, jev, path, attached[]
@@ -87,7 +88,10 @@ decides per task.
 - `agent-created` — a specialist was drafted: `agent`, `reasons` (new skills).
 - `trim` — a trimmed tool output: `trim: { tool, command, charsBefore, charsAfter, outcome, jevChunks, path }`.
 - `output-read` — the model opened a saved full output or a pruned call (`text` names the tool and path).
-- `compact` also carries `compaction.archived`: pruned calls saved to files.
+- `compact` also carries `compaction.archived`: pruned calls saved to files,
+  and `compaction.folded: { candidates, folded, chars, requests, byKind }`: old
+  dialog messages Jev was asked about, folded, the characters that went, and
+  per kind (answer / paste / agent / monitor / task).
 - `handoff` — a capsule made in the old chat (`action: create`) or attached in a new one (`attach`): `handoff: { id, tokens, sourceTokens, turns, brief, jev, path }`.
 - `hint` — the new-chat suggestion was shown: `newTopic`, `reasons` (context size).
 - `turn` also carries `newTopic`: Jev's P(the request starts a new task).

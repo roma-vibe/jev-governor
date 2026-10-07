@@ -72,4 +72,6 @@ export default {
   'created': 'создан',
   'shadow': 'наблюдение',
   'Model switched': 'Модель переключена',
+  'Jev: data, not a log (left whole)':
+    'Jev: данные, не лог (оставлено целиком)',
 } as Record<string, string>;

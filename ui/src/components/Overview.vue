@@ -413,6 +413,10 @@ function where(e: LedgerEntry): string {
               <dd class="tabular-nums">{{ fmtNum(stats.trims.skipped ?? 0) }}</dd>
             </div>
             <div class="flex justify-between gap-2">
+              <dt class="text-zinc-500 dark:text-zinc-400">{{ t('Jev: data, not a log (left whole)') }}</dt>
+              <dd class="tabular-nums">{{ fmtNum(stats.trims.logsData ?? 0) }}</dd>
+            </div>
+            <div class="flex justify-between gap-2">
               <dt class="text-zinc-500 dark:text-zinc-400">{{ t('In shadow mode') }}</dt>
               <dd class="tabular-nums">{{ fmtNum(stats.trims.shadow) }}</dd>
             </div>

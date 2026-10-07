@@ -3,7 +3,9 @@
 // library returns untouched are handed back as the engine's own objects
 // (handles included), rebuilt ones as fresh messages.
 
-import { compact, limitPruning, reductionRatio } from './compact.ts';
+import { compact, limitPruning, reductionRatio, resolveOptions } from './compact.ts';
+import { askFolds, collectFoldCandidates, type FoldDecision, type FoldOptions } from './fold.ts';
+import { collectToolCalls, fitState } from './state.ts';
 import type { CompactOptions, CompactResult, JevAsker, Message, ToolResult, ToolUse } from './types.ts';
 
 /** The engine's SessionMessage, structurally: what the mapping relies on. */
@@ -50,7 +52,8 @@ export function toEngineMessages<M extends EngineMessage>(
   });
 }
 
-export function summarizeCompaction(result: CompactResult): string {
+/** One line for the ledger and the toast; `fold`: old messages folded after the pruning, and the reduction of both. */
+export function summarizeCompaction(result: CompactResult, fold?: { folded: number; requests: number; ratio: number }): string {
   const { stats } = result;
   const parts = [
     stats.kept > 0 ? `${stats.kept} kept` : '',
@@ -58,8 +61,10 @@ export function summarizeCompaction(result: CompactResult): string {
     stats.callsDropped > 0 ? `${stats.callsDropped} calls dropped` : '',
     stats.pinned > 0 ? `${stats.pinned} pinned` : '',
     stats.restored ? `${stats.restored} put back (prune cap)` : '',
+    fold && fold.folded > 0 ? `${fold.folded} old message(s) folded` : '',
   ].filter(Boolean);
-  return `${Math.round(reductionRatio(result) * 100)}% reduction; ${parts.join(', ') || 'no tool calls'}; ${stats.requests} Jev request(s)`;
+  const ratio = fold ? fold.ratio : reductionRatio(result);
+  return `${Math.round(ratio * 100)}% reduction; ${parts.join(', ') || 'no tool calls'}; ${stats.requests + (fold?.requests ?? 0)} Jev request(s)`;
 }
 
 /** Compacts with Jev, then puts calls back while more than `maxPruneRatio` would go (1 = no cap). */
@@ -71,4 +76,21 @@ export async function runCompaction<M extends EngineMessage>(
   const raw = await compact(messages, asker, options);
   const result = limitPruning(messages, raw, { ...options, maxPruneRatio: options.maxPruneRatio ?? 1 });
   return { result, messages: toEngineMessages(messages, result.messages), ratio: reductionRatio(result) };
+}
+
+/**
+ * Asks Jev which old dialog messages to fold (./fold.ts), with the state the
+ * call questions get. Throws when Jev fails; the caller compacts without folds.
+ */
+export async function planFolds(
+  messages: readonly Message[],
+  asker: JevAsker,
+  options: CompactOptions,
+  fold: FoldOptions,
+): Promise<{ decisions: FoldDecision[]; requests: number }> {
+  const candidates = collectFoldCandidates(messages, fold);
+  if (candidates.length === 0) return { decisions: [], requests: 0 };
+  const resolved = resolveOptions(options);
+  const state = fitState(messages, collectToolCalls(messages, resolved.preserveRecentMessages), resolved);
+  return askFolds(asker, state.state, state.tokens, candidates, messages, fold);
 }

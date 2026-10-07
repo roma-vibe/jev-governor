@@ -60,6 +60,8 @@ export type Stats = {
     shadow: number;
     /** Qualified, but a trim would have removed too little: the output stayed whole. */
     skipped: number;
+    /** Outputs Jev judged data, not a log: kept whole. */
+    logsData?: number;
     /** Sums below cover applied trims only. */
     charsBefore: number;
     charsAfter: number;
