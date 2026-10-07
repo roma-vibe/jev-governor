@@ -334,6 +334,11 @@ export function applyFolds(
   });
 }
 
+/** Jev's answer on each candidate, compact for the ledger: `kind:keep:chars:turnsAgo`, at most 40. */
+export function foldKeeps(decisions: readonly FoldDecision[]): string[] {
+  return decisions.slice(0, 40).map((d) => `${d.kind}:${d.keep.toFixed(2)}:${d.chars}:${d.turnsAgo}`);
+}
+
 /** Counts for the ledger: candidates, folded, and characters folded away, per kind. */
 export function foldStats(
   decisions: readonly FoldDecision[],

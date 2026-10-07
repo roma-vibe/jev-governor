@@ -19,7 +19,7 @@ describe/<id>.json          DescribeRequest: command descriptions an open sessio
 outputs/<session>/<id>.txt  full tool outputs that were trimmed (7 days / 200 MB)
 outputs/<session>/pruned/<tool_use_id>.txt   calls a compaction pruned: input + full output (same caps)
 outputs/<session>/folded/<hash>-<chars>.md   old dialog messages a compaction folded: full text
-outputs/<session>/pruned/index.md            one line per pruned call, newest last
+outputs/<session>/pruned/index.md            one line per pruned call, newest last (file names relative to it)
 handoffs/<id>.md            a capsule for a new chat (/jevg getctx, /jevg fresh); kept handoff.keepDays (30)
 handoffs/<id>.json          its record: id, cwd, session, title, focus, tokens, sourceTokens, turns, brief, jev, path, attached[]
 ledger/<YYYY-MM-DD>/<session>.jsonl   LedgerEntry per line, written by the mod only (`v`: mod version, since 0.3.2)
@@ -78,7 +78,12 @@ decides per task.
   `usage: { model, input, output, cacheRead, cacheWrite }`, plus `steps` (model
   requests in the turn), `effort` (what the mod sent) and `baseModel` /
   `baseEffort` (what the turn would have run on without the mod) — the inputs
-  of the savings report (`hooks/lib/savings.ts`).
+  of the savings report (`hooks/lib/savings.ts`). Since 0.3.4 the tokens are the
+  turn's steps summed (`usageFrom: steps`): the figure Claude Code reports at the
+  end of a turn starts over at a compaction inside it, so earlier entries of
+  long turns (`usageFrom` absent or `turn`) hold only what came after the last
+  one. A turn that ran on more than one model (a light subagent moved up) gets
+  one entry per model, each with its own `steps`.
 - `compact` — Jev compaction: `compaction: { charsBefore, charsAfter, ratio,
   requests, fallback?, reason }` (`reason`: engine / threshold / return / window), `jevCost`, `model`
   (in a subagent: `scope: subagent`, its `agentId` and the model it was routed to).
@@ -87,11 +92,13 @@ decides per task.
   `tokens`/`source` are what the engine measures against (`source: env` when the variable took).
 - `agent-created` — a specialist was drafted: `agent`, `reasons` (new skills).
 - `trim` — a trimmed tool output: `trim: { tool, command, charsBefore, charsAfter, outcome, jevChunks, path }`.
-- `output-read` — the model opened a saved full output or a pruned call (`text` names the tool and path).
+- `output-read` — the model opened a saved full output or a pruned call (`text` names the tool and path;
+  `archive`: pruned / folded / trim / tool-results / other, since 0.3.4).
 - `compact` also carries `compaction.archived`: pruned calls saved to files,
-  and `compaction.folded: { candidates, folded, chars, requests, byKind }`: old
+  and `compaction.folded: { candidates, folded, chars, requests, byKind, keeps }`: old
   dialog messages Jev was asked about, folded, the characters that went, and
-  per kind (answer / paste / agent / monitor / task).
+  per kind (answer / paste / agent / monitor / task); `keeps` (0.3.4) lists each
+  candidate as `kind:keep:chars:turnsAgo`, Jev's probability that it must stay.
 - `handoff` — a capsule made in the old chat (`action: create`) or attached in a new one (`attach`): `handoff: { id, tokens, sourceTokens, turns, brief, jev, path }`.
 - `hint` — the new-chat suggestion was shown: `newTopic`, `reasons` (context size).
 - `turn` also carries `newTopic`: Jev's P(the request starts a new task).
@@ -99,7 +106,8 @@ decides per task.
 - `turn` also carries `correction` (Jev's P(the request corrects the previous
   answer)) and `local: true` when it was decided without Jev (a short
   follow-up such as «да», «давай», "go on").
-- `usage` also carries `escalated`: effort levels added after failed tool calls.
+- `usage` also carries `escalated`: effort levels added after failed tool calls
+  (counted among the `router.errorWindow` latest tool results since 0.3.4).
 - `override` — the person disagreed with the router: a `/model` change
   (`model`, `prevModel`) or a change of the session's own effort (`effort`);
   `reasons` says which.

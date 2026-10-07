@@ -223,6 +223,16 @@ export function getSections(): Section[] {
           help: t('How many failed tool calls in one turn raise effort by one level. 0 means never.'),
         },
         {
+          path: 'router.errorWindow',
+          label: t('Errors counted among the latest'),
+          kind: 'number',
+          step: 1,
+          min: 0,
+          max: 100,
+          unit: t('tool results'),
+          help: t('Only failures close together raise effort: they are counted among this many latest tool results. Scattered failures over a long turn (a search with no match, a stale page element) are not the model being stuck. 0 counts the whole turn.'),
+        },
+        {
           path: 'router.riskyAt',
           label: t('Threshold for a “risky” task'),
           ...prob,

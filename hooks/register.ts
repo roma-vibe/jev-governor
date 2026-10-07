@@ -32,7 +32,7 @@ import {
 } from './lib/capsule.ts';
 import { planFolds, runCompaction, summarizeCompaction } from './lib/compaction/adapter.ts';
 import { messageChars } from './lib/compaction/compact.ts';
-import { applyFolds, DEFAULT_FOLD_OPTIONS, foldArchiveText, foldFileName, foldStats, type FoldOptions } from './lib/compaction/fold.ts';
+import { applyFolds, DEFAULT_FOLD_OPTIONS, foldArchiveText, foldFileName, foldKeeps, foldStats, type FoldOptions } from './lib/compaction/fold.ts';
 import { resolveLang, systemLocales } from './lib/lang.ts';
 import { expandHome, isExcluded, resolveConfig } from './lib/config.ts';
 import { clip, estimateContextTokens, recentHistory, type HistoryMessage } from './lib/history.ts';
@@ -108,6 +108,11 @@ import {
   statusText,
   type SubState,
   usageBase,
+  addStepUsage,
+  noteToolResult,
+  archiveOf,
+  stepKey,
+  turnUsageParts,
 } from './mod/state.ts';
 
 // How specialists reach a subagent (verified against the engine, 2.1.286):
@@ -1321,7 +1326,7 @@ async function foldDialog(
   const stats = foldStats(decisions, messages, out);
   return {
     messages: out,
-    folded: { candidates: stats.candidates, folded: stats.folded, chars: stats.charsSaved, requests, byKind: stats.byKind },
+    folded: { candidates: stats.candidates, folded: stats.folded, chars: stats.charsSaved, requests, byKind: stats.byKind, keeps: foldKeeps(decisions) },
   };
 }
 
@@ -2041,25 +2046,32 @@ export const register: Register = (on) => {
 
   on('turn.step', async function* ($, e, next) {
     await ensureInit($);
+    // Every request's usage is summed here: what turn.complete reports starts over at a compaction inside the turn.
+    const key = stepKey(e.turnId, e.agentId);
+    const counted = async function* (x: typeof e) {
+      const result = yield* next(x);
+      addStepUsage(key, result?.usage);
+      return result;
+    };
     if (e.agentId === undefined) S.lastMainStepAt = Date.now();
     // The handoff brief: same model (its cache is what makes it cheap), no deep reasoning needed.
     if (e.agentId === undefined && S.handoff?.turnId === e.turnId) {
       S.route.lastRequestAt = Date.now();
-      return yield* next(e.effort === undefined ? e : { ...e, effort: 'medium' });
+      return yield* counted(e.effort === undefined ? e : { ...e, effort: 'medium' });
     }
-    if (!active()) return yield* next(e);
+    if (!active()) return yield* counted(e);
 
     if (e.agentId !== undefined) {
-      if (shadow()) return yield* next(e);
+      if (shadow()) return yield* counted(e);
       const sub = S.subs.get(e.agentId) ?? (await claimPending($, e.agentId));
-      if (!sub || !S.cfg.router.subagents) return yield* next(e);
+      if (!sub || !S.cfg.router.subagents) return yield* counted(e);
       sub.steps++;
       if (sub.baseEffort === undefined && typeof e.effort === 'string') sub.baseEffort = e.effort;
       const steps = S.cfg.router.escalateAfterErrors > 0 ? Math.floor(sub.errors / S.cfg.router.escalateAfterErrors) : 0;
       if (sub.light) {
         // The light model has no effort to send. Its window is smaller and it reasons less: a growing
         // task or failing tools move it to the standard model (one cache rewrite, once).
-        if (sub.steps <= S.cfg.router.lightMaxSteps && steps === 0) return yield* next(e);
+        if (sub.steps <= S.cfg.router.lightMaxSteps && steps === 0) return yield* counted(e);
         sub.light = false;
         sub.tier = 'standard';
         sub.model = S.cfg.models.standard;
@@ -2070,14 +2082,14 @@ export const register: Register = (on) => {
           model: S.cfg.models.standard,
           reasons: [steps > 0 ? 'light subagent: tool errors, moved to the standard model' : `light subagent: ${sub.steps} steps, moved to the standard model`],
         });
-        return yield* next({ ...e, model: S.cfg.models.standard, effort: escalate(sub.effort, Math.min(2, steps), S.cfg) });
+        return yield* counted({ ...e, model: S.cfg.models.standard, effort: escalate(sub.effort, Math.min(2, steps), S.cfg) });
       }
       if (steps > 0) sub.escalated = Math.max(sub.escalated ?? 0, Math.min(2, steps));
-      return yield* next({ ...e, ...(sub.model ? { model: sub.model } : {}), effort: escalate(sub.effort, Math.min(2, steps), S.cfg) });
+      return yield* counted({ ...e, ...(sub.model ? { model: sub.model } : {}), effort: escalate(sub.effort, Math.min(2, steps), S.cfg) });
     }
 
     const turn = S.turn;
-    if (!turn || turn.id !== e.turnId) return yield* next(e);
+    if (!turn || turn.id !== e.turnId) return yield* counted(e);
     turn.steps++;
     if (turn.baseModel === undefined) turn.baseModel = e.model;
     if (turn.baseEffort === undefined && typeof e.effort === 'string') {
@@ -2090,7 +2102,7 @@ export const register: Register = (on) => {
       }
     }
     const outcome = await turn.decision;
-    if (!outcome) return yield* next(e);
+    if (!outcome) return yield* counted(e);
 
     const { decision } = outcome;
     const applied = !shadow();
@@ -2148,9 +2160,9 @@ export const register: Register = (on) => {
       });
       await suggestNewChat($, turn.text, outcome);
     }
-    if (!applied) return yield* next(e);
+    if (!applied) return yield* counted(e);
     if (effort) turn.sentEffort = effort;
-    return yield* next({ ...e, model, ...(effort ? { effort } : {}) });
+    return yield* counted({ ...e, model, ...(effort ? { effort } : {}) });
   });
 
   on('tool.call', async ($, e, next) => {
@@ -2165,6 +2177,7 @@ export const register: Register = (on) => {
           kind: 'output-read',
           scope: e.agentId ? 'subagent' : 'main',
           agentId: e.agentId,
+          archive: archiveOf(target, S.data),
           text: `${tool} ${clip(target, 160)}${typeof input.pattern === 'string' ? ` /${clip(input.pattern, 60)}/` : ''}`,
         });
       }
@@ -2210,13 +2223,9 @@ export const register: Register = (on) => {
         });
       }
     }
-    if (result.deny === undefined && result.isError === true) {
-      if (e.agentId !== undefined) {
-        const sub = S.subs.get(e.agentId);
-        if (sub) sub.errors++;
-      } else if (S.turn) {
-        S.turn.errors++;
-      }
+    if (result.deny === undefined) {
+      const counter = e.agentId !== undefined ? S.subs.get(e.agentId) : S.turn;
+      if (counter) noteToolResult(counter, result.isError === true, S.cfg.router.errorWindow);
     }
     return result;
   });
@@ -2340,29 +2349,39 @@ export const register: Register = (on) => {
         );
       });
     }
+    const key = stepKey(e.turnId, e.agentId);
+    const parts = turnUsageParts(e.usage, S.stepUsage.get(key));
+    S.stepUsage.delete(key);
     if (!active()) return result;
-    if (e.usage) {
+    if (parts.length > 0) {
       const rate = e.agentId === undefined ? (await pressureNow($)).rate : undefined;
-      await ledger($, {
-        rate,
-        applied: !shadow(),
-        kind: 'usage',
-        scope: e.agentId ? 'subagent' : 'main',
-        agentId: e.agentId,
-        agent: e.agentId ? S.subs.get(e.agentId)?.agent : undefined,
-        ...usageBase(e.agentId, e.usage.model),
-        usage: {
-          model: e.usage.model,
-          input: e.usage.input_tokens,
-          output: e.usage.output_tokens,
-          cacheRead: e.usage.cache_read_input_tokens,
-          cacheWrite: e.usage.cache_creation_input_tokens,
-        },
-      });
+      for (const part of parts) {
+        await ledger($, {
+          rate,
+          applied: !shadow(),
+          kind: 'usage',
+          scope: e.agentId ? 'subagent' : 'main',
+          agentId: e.agentId,
+          agent: e.agentId ? S.subs.get(e.agentId)?.agent : undefined,
+          ...usageBase(e.agentId, part.model),
+          ...(part.steps !== undefined ? { steps: part.steps } : {}),
+          usageFrom: part.from,
+          usage: {
+            model: part.model,
+            input: part.usage.input_tokens,
+            output: part.usage.output_tokens,
+            cacheRead: part.usage.cache_read_input_tokens,
+            cacheWrite: part.usage.cache_creation_input_tokens,
+          },
+        });
+      }
     }
     // A /jevg fresh brief: the chat is about to be cleared, nothing to learn, idle or compact.
     if (e.agentId === undefined && !(briefTurn && pending?.fresh)) {
-      if (e.usage && !e.isAborted && !briefTurn) learnTurn(e.usage, S.turn?.id === e.turnId && S.turn.rewroteCache === true);
+      if (parts.length > 0 && !e.isAborted && !briefTurn) {
+        const total = parts.reduce((a, p) => ({ output_tokens: a.output_tokens + p.usage.output_tokens, cache_creation_input_tokens: a.cache_creation_input_tokens + p.usage.cache_creation_input_tokens }), { output_tokens: 0, cache_creation_input_tokens: 0 });
+        learnTurn(total, S.turn?.id === e.turnId && S.turn.rewroteCache === true);
+      }
       await saveRoute($);
       scheduleIdle($);
       const k = S.cfg.compaction;

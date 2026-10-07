@@ -68,7 +68,7 @@ describe('archive text', () => {
 
   it('writes one index line per call', () => {
     const line = indexLine({ toolUseId: 'u2', tool: 'Read', input: { file_path: '/p/v.ts' }, result: 'abc', isError: false, action: 'drop_call' }, '/d/u2.txt');
-    expect(line).toBe('- Read(/p/v.ts) · call removed · 3 chars → /d/u2.txt');
+    expect(line).toBe('- Read(/p/v.ts) · call removed · 3 chars → u2.txt');
   });
 });
 

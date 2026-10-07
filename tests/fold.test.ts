@@ -14,6 +14,7 @@ import {
   foldedText,
   foldFileName,
   foldQuestion,
+  foldKeeps,
   foldStats,
   headOf,
   isPrompt,
@@ -185,5 +186,8 @@ describe('asking Jev', () => {
     const stats = foldStats(decisions, messages, out);
     expect(stats).toMatchObject({ candidates: 5, folded: 3, byKind: { answer: 1, agent: 1, monitor: 1 } });
     expect(stats.charsSaved).toBeGreaterThan(2000);
+    const keeps = foldKeeps(decisions);
+    expect(keeps).toHaveLength(5);
+    expect(keeps[0]).toMatch(/^answer:0\.10:\d+:\d+$/);
   });
 });

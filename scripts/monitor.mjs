@@ -13,7 +13,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { computeSavings, familyOf, PRICES } from '../hooks/lib/savings.ts';
+import { computeSavings, familyOf, PRICES, usageCost } from '../hooks/lib/savings.ts';
 import { resolveConfig } from '../hooks/lib/config.ts';
 import { pricable } from '../ui/lib/pricable.ts';
 
@@ -212,6 +212,9 @@ function stepsOf(lines, { sidechain }) {
   const steps = new Map();
   let cwd;
   const prompts = [];
+  // Tool-result characters: all of them, and those of reads from the mod's archive (pruned/folded).
+  const results = { all: 0, pruned: 0, folded: 0 };
+  const archived = new Map();
   for (const line of lines) {
     const e = parse(line);
     if (!e || (!sidechain && e.isSidechain)) continue;
@@ -234,8 +237,20 @@ function stepsOf(lines, { sidechain }) {
     } else if (!sidechain && e.type === 'user' && e.promptId && typeof e.message?.content === 'string') {
       prompts.push({ ts: e.timestamp, text: e.message.content.slice(0, 80) });
     }
+    if (!Array.isArray(e.message?.content)) continue;
+    for (const b of e.message.content) {
+      if (b.type === 'tool_use') {
+        const m = /jev-governor\/outputs\/[^/\s"']+\/(pruned|folded)\b/.exec(JSON.stringify(b.input ?? {}));
+        if (m) archived.set(b.id, m[1]);
+      } else if (b.type === 'tool_result') {
+        const chars = typeof b.content === 'string' ? b.content.length : (b.content ?? []).reduce((a, x) => a + (x.text?.length ?? 0), 0);
+        results.all += chars;
+        const kind = archived.get(b.tool_use_id);
+        if (kind) results[kind] += chars;
+      }
+    }
   }
-  return { steps: [...steps.values()].sort((a, b) => a.ts.localeCompare(b.ts)), cwd, prompts };
+  return { steps: [...steps.values()].sort((a, b) => a.ts.localeCompare(b.ts)), cwd, prompts, results };
 }
 
 /** API-equivalent dollars of one request at list prices (`subagent`: cache writes at the 5-minute price unless the transcript says 1h). */
@@ -284,7 +299,7 @@ async function loadTranscripts() {
       const file = path.join(PROJECTS, dir, name);
       const stat = await fs.stat(file).catch(() => undefined);
       if (!stat || stat.mtimeMs < from) continue;
-      const { steps, cwd, prompts } = stepsOf(await readLines(file), { sidechain: false });
+      const { steps, cwd, prompts, results } = stepsOf(await readLines(file), { sidechain: false });
       const subagents = [];
       const subDir = path.join(PROJECTS, dir, name.slice(0, -6), 'subagents');
       let subNames = [];
@@ -301,7 +316,7 @@ async function loadTranscripts() {
         if (sub.steps.length > 0) subagents.push({ id: subName.slice(0, -6), steps: sub.steps });
       }
       if (prompts.length === 0 && steps.length === 0 && subagents.length === 0) continue;
-      sessions.push({ id: name.slice(0, -6), project: path.basename(cwd ?? dir), cwd, steps, prompts, subagents });
+      sessions.push({ id: name.slice(0, -6), project: path.basename(cwd ?? dir), cwd, steps, prompts, subagents, results });
     }
   }
   return sessions;
@@ -432,9 +447,15 @@ async function main() {
   const skipped = compacts.filter((e) => String(e.text ?? '').startsWith('skipped'));
   const fallback = compacts.filter((e) => e.compaction?.fallback && !String(e.text ?? '').startsWith('skipped'));
   const reads = by('output-read');
-  const pruneReads = reads.filter((e) => String(e.text ?? '').includes('/pruned/'));
+  // `archive` since 0.3.4; before it the text, where `D=…/pruned; cat $D/x` has no slash after the folder.
+  const readOf = (e) => e.archive ?? (/\/pruned\b/.test(e.text ?? '') ? 'pruned' : /\/folded\b/.test(e.text ?? '') ? 'folded' : /\/tool-results\//.test(e.text ?? '') ? 'tool-results' : 'other');
+  const pruneReads = reads.filter((e) => readOf(e) === 'pruned');
+  const foldReads = reads.filter((e) => readOf(e) === 'folded');
   // Claude Code's own saved outputs: read back by the model, not removed by the mod, so not in the ratio.
-  const toolResultReads = reads.filter((e) => String(e.text ?? '').includes('/tool-results/'));
+  const toolResultReads = reads.filter((e) => readOf(e) === 'tool-results');
+  const resultChars = transcripts.reduce((a, s) => ({ all: a.all + s.results.all, pruned: a.pruned + s.results.pruned, folded: a.folded + s.results.folded }), { all: 0, pruned: 0, folded: 0 });
+  const folds = applied.map((e) => e.compaction.folded).filter(Boolean);
+  const keeps = folds.flatMap((f) => f.keeps ?? []).map((x) => x.split(':')).map(([kind, keep]) => ({ kind, keep: Number(keep) }));
   const reruns = by('rerun-after-prune');
   const back = pruneReads.length + reruns.length;
   const ratios = applied.map((e) => e.compaction.ratio).filter(Number.isFinite);
@@ -449,6 +470,8 @@ async function main() {
       `Средняя доля убранного ${ratios.length ? pct(ratios.reduce((a, b) => a + b, 0), ratios.length) : '—'}, максимум ${ratios.length ? pct(Math.max(...ratios), 1) : '—'}; выше предела ${pct(config.compaction.maxPruneRatio, 1)}: ${overCap}; возвращено пределом вызовов: ${applied.reduce((a, e) => a + (e.compaction.restored ?? 0), 0)}.`,
       `Без записи \`archived\`: ${noArchive.length}${noArchive.length ? ` (сессии: ${[...new Set(noArchive.map((e) => e.session.slice(0, 8)))].join(', ')})` : ''}.`,
       `Обращений к убранному: чтений архива ${pruneReads.length}, повторных запусков ${reruns.length} → **${applied.length ? (back / applied.length).toFixed(2) : '—'} на сжатие**${toolResultReads.length ? `; чтений сохранённых выводов Claude Code (\`tool-results/\`, не в счёте): ${toolResultReads.length}` : ''}.`,
+      `Прочитано из архива (по транскриптам): ${k(resultChars.pruned)} символов — ${pct(resultChars.pruned, resultChars.all)} всех результатов инструментов основного диалога.`,
+      `Сворачивание старого диалога: сжатий с кандидатами ${folds.length}, кандидатов ${folds.reduce((a, f) => a + f.candidates, 0)}, свёрнуто ${folds.reduce((a, f) => a + f.folded, 0)} (${k(folds.reduce((a, f) => a + f.chars, 0))} символов); чтений свёрнутого ${foldReads.length} (${k(resultChars.folded)} символов).${keeps.length ? ` Оценки Jev «оставить» (${keeps.length}, с 0.3.4): медиана ${median(keeps.map((x) => x.keep)).toFixed(2)}; ответов ниже порога 0.3: ${keeps.filter((x) => x.kind === 'answer' && x.keep < 0.3).length} из ${keeps.filter((x) => x.kind === 'answer').length}.` : ''}`,
       `Запуск нашего сжатия через \`/compact\` (приложение): ${viaCommand}; ошибок запуска по таймеру или порогу: ${idleErrors.length}.`,
       `Не в счёте выше: сжатий в субагентах ${subCompacts}, заранее посчитанных (precompute) ${precomputes}.`,
       ...reruns.slice(-5).map((e) => `- повтор: ${e.text}`),
@@ -456,9 +479,13 @@ async function main() {
   );
   if (applied.length > 0) {
     const perCompaction = back / applied.length;
-    if (perCompaction > 1) {
+    // Judged by volume: a look at the index or one small file is cheap; what costs is how much of
+    // what was removed comes back. The count alone (index reads included) overstated it.
+    const removedChars = applied.reduce((a, e) => a + Math.max(0, e.compaction.charsBefore - e.compaction.charsAfter), 0);
+    const backShare = removedChars > 0 ? resultChars.pruned / removedChars : 0;
+    if (backShare > 0.15 || (resultChars.all === 0 && perCompaction > 1)) {
       advice.push(
-        `Модели нужно убранное ${perCompaction.toFixed(1)} раза на сжатие: Jev убирает нужное. Поднимите compaction.keepThreshold (сейчас ${config.compaction.keepThreshold}) на 0.05–0.1.`,
+        `Модель читает обратно ${pct(resultChars.pruned, removedChars)} убранного (${perCompaction.toFixed(1)} обращения на сжатие): Jev убирает нужное. Поднимите compaction.keepThreshold (сейчас ${config.compaction.keepThreshold}) на 0.05–0.1.`,
       );
     } else if (perCompaction < 0.1 && applied.length >= 5) {
       advice.push(`К убранному почти не обращаются (${perCompaction.toFixed(2)} на сжатие): можно ослабить compaction.maxPruneRatio или сжимать раньше.`);
@@ -553,10 +580,18 @@ async function main() {
   const subCost = subRuns.reduce((a, r) => a + r.steps.reduce((b, st) => b + stepCost(st, true), 0), 0);
   const rebuilds = subRuns.flatMap((r) => rebuildsOf(r.steps));
   const rebuildCost = rebuilds.reduce((a, r) => a + r.cost, 0);
+  // How much of the main dialog's spend the ledger's usage entries hold, in the sessions that have
+  // them. Before 0.3.4 a turn's usage started over at each compaction inside it, so long turns
+  // with window compactions were logged at a fraction of their cost (and savings with them).
+  const usageSessions = new Set(usage.filter((e) => e.scope !== 'subagent').map((e) => e.session));
+  const loggedMain = usage.filter((e) => e.scope !== 'subagent').reduce((a, e) => a + usageCost(e.usage, familyOf(e.usage.model) ?? 'opus', true), 0);
+  const seenMain = transcripts.filter((s) => usageSessions.has(s.id)).reduce((a, s) => a + s.steps.reduce((b, st) => b + stepCost(st, false), 0), 0);
+  const fromSteps = usage.filter((e) => e.usageFrom === 'steps').length;
   out.push(
     section('7. Расход (эквивалент API)', [
       `Все шаги по транскриптам: ${usd(mainCost + subCost)} — основной диалог ${usd(mainCost)}, субагенты ${usd(subCost)}.`,
       `Пересборок кэша субагентов после паузы больше 5 минут: ${rebuilds.length}${rebuilds.length ? `, ${k(rebuilds.reduce((a, r) => a + r.tokens, 0))} токенов, ≈ ${usd(rebuildCost)}` : ''}.`,
+      `Журнал мода учёл ${pct(loggedMain, seenMain)} расхода основного диалога в своих сессиях (${usd(loggedMain)} из ${usd(seenMain)}); записей usage по шагам (0.3.4+): ${fromSteps} из ${usage.length}.`,
       `Ходы под управлением мода: ${usd(t.actual)} — чтение кэша ${pct(t.cost.cacheRead, costSum)}, запись ${pct(t.cost.cacheWrite, costSum)}, вывод ${pct(t.cost.output, costSum)}, вход ${pct(t.cost.input, costSum)}.`,
       `Сэкономлено: точно ${usd(t.exact)}, по оценке ≈ ${usd(t.estimated)}; Jev ${usd(t.jev)}; чистая выгода ${usd(t.net)}${t.assumedTurns ? `; из неё от допущения «без мода ${report.events.find((e) => e.assumed)?.assumed}» ${usd(t.assumed)} (${t.assumedTurns} ходов)` : ''}.`,
       `По источникам: ${Object.entries(t.bySource).map(([s, v]) => `${s} ${usd(v)}`).join(', ')}.`,
@@ -564,6 +599,9 @@ async function main() {
     ]),
   );
 
+  if (seenMain > 1 && loggedMain < 0.85 * seenMain) {
+    advice.push(`Журнал учёл только ${pct(loggedMain, seenMain)} расхода основного диалога: ${fromSteps < usage.length ? 'записи до 0.3.4 теряли шаги до сжатия внутри хода, экономия занижена' : 'часть ходов не попала в журнал (Jev не ответил, мод перезагружался?)'}.`);
+  }
   if (rebuildCost > 0.05 * (mainCost + subCost)) {
     advice.push(`Пересборки кэша субагентов стоили ${usd(rebuildCost)} (${pct(rebuildCost, mainCost + subCost)} всего): субагенты ждут дольше 5 минут за вызов. Проверьте, что agents.waitHint включён и что в задачах субагентов есть <cache-note>.`);
   }

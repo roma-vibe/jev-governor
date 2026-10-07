@@ -82,6 +82,10 @@ export default {
   'errors per turn': 'ошибок за ход',
   'How many failed tool calls in one turn raise effort by one level. 0 means never.':
     'Сколько неудачных вызовов инструментов за один ход повышают effort на один уровень. 0 — никогда.',
+  'Errors counted among the latest': 'Ошибки считаются среди последних',
+  'tool results': 'результатов инструментов',
+  'Only failures close together raise effort: they are counted among this many latest tool results. Scattered failures over a long turn (a search with no match, a stale page element) are not the model being stuck. 0 counts the whole turn.':
+    'Effort повышают только ошибки, идущие подряд или рядом: они считаются среди стольких последних результатов инструментов. Разрозненные ошибки за длинный ход (поиск без совпадений, устаревший элемент страницы) не значат, что модель застряла. 0 — считать весь ход.',
   'Threshold for a “risky” task': 'Порог «рискованной» задачи',
   'The probability that the task is risky (irreversible actions, production) at which effort is raised to at least high and Opus is used. A lower threshold means more caution and more spending.':
     'Вероятность, что задача рискованная (необратимые действия, продакшен), при которой effort поднимается минимум до high и берётся Opus. Ниже порог — больше перестраховки и расхода.',

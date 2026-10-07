@@ -1052,4 +1052,27 @@ describe('jev-governor hooks against a fake engine', () => {
     files.set(`${DATA}/config.json`, JSON.stringify(config));
     draftName = 'packet-grader';
   });
+
+  it('a turn\'s usage is summed from its steps: the turn\'s own figure starts over at a compaction inside it', async () => {
+    await startSession('usage-session');
+    messages = oldChat();
+    await emit('turn.start', { turnId: 'u1', text: 'почини падающий тест в модуле оплаты' });
+    const stepUsage = (cacheRead: number) => ({ model: 'claude-opus-5-5', input_tokens: 2, output_tokens: 100, cache_read_input_tokens: cacheRead, cache_creation_input_tokens: 1_000 });
+    for (const [i, read] of [200_000, 240_000, 80_000].entries()) {
+      const step = handlers.get('turn.step')![0]!($, { turnId: 'u1', index: i, model: sessionModel, effort: 'xhigh' }, async function* (x: any) {
+        yield x;
+        return { turnId: 'u1', index: i, answer: '', toolUses: [], stopReason: 'tool_use', usage: stepUsage(read) };
+      });
+      for await (const _ of step as AsyncIterable<unknown>) {
+        // drain
+      }
+    }
+    // What the engine reports: only the step after the compaction.
+    await emit('turn.complete', { turnId: 'u1', answer: 'ok', reason: 'answer', isAborted: false, durationMs: 1, usage: stepUsage(80_000) }, async () => ({ text: '' }));
+    const entries = [...files.entries()].filter(([p]) => p.endsWith('usage-session.jsonl')).flatMap(([, t]) => t.split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+    const usage = entries.filter((e) => e.kind === 'usage');
+    expect(usage).toHaveLength(1);
+    expect(usage[0].usage).toEqual({ model: 'claude-opus-5-5', input: 6, output: 300, cacheRead: 520_000, cacheWrite: 3_000 });
+    expect(usage[0].usageFrom).toBe('steps');
+  });
 });

@@ -14,7 +14,7 @@ Mods shipped in Claude Code 2.1.287. This one uses only that official mechanism:
 - **Old dialog folded.** At every compaction, earlier answers, agent reports, monitor events and long pastes older than the last two turns keep their first lines and a link to a file with the full text (`compaction.fold`). Jev keeps the ones the current work still relies on. On a long real chat this removed 35–67% of the dialog text per compaction.
 - **Nothing is lost.** Everything compaction removes is archived to files and the history keeps a pointer; Claude reads it back when it needs an old detail.
 - **Large output trimming.** Test, build and install output is cut before it enters history: the outcome, every error line with context, and the summary lines. File reads are left alone.
-- **Escalation on facts.** After repeated tool errors the effort goes up for the rest of the turn.
+- **Escalation on facts.** When tool calls fail close together (by default 2 of the last 6 results), the effort goes up for the rest of the turn; scattered failures over a long turn do not count.
 - **Limits-aware.** If the 5-hour or weekly window is burning faster than normal, thresholds shift toward saving.
 - **Short waits in subagents.** Each subagent task asks to wait for builds no longer than 4 minutes per call: its cache lives 5 minutes, and a longer pause rewrites its whole context.
 - **Move to a new chat.** `/jevg getctx` builds a compact "capsule" of the chat (brief, work steps, changed files, latest checks); `/jevg fresh` does it in the same window: capsule, `/clear`, capsule attached to your next message.

@@ -134,15 +134,21 @@ export function pointerText(text: string, isError: boolean, headChars: number, p
 }
 
 /** One line of the pruned-calls index. */
+/**
+ * One line of the session's index: the call, what happened to it and its file. The file is
+ * named without its folder (the index's own): the model reads the index's tail, and the full
+ * path repeated on every line was ~40% of it (an index of 826 lines reached 184k characters).
+ */
 export function indexLine(call: PrunedCall, path: string): string {
   const what = call.action === 'drop_call' ? 'call removed' : 'output truncated';
   const size = isPointerText(call.result) ? 'output archived earlier' : `${call.result.length} chars`;
-  return `- ${callLabel(call.tool, call.input)}${call.isError ? ' → error' : ''} · ${what} · ${size} → ${path}`;
+  const file = path.slice(path.lastIndexOf('/') + 1);
+  return `- ${callLabel(call.tool, call.input)}${call.isError ? ' → error' : ''} · ${what} · ${size} → ${file}`;
 }
 
 /** The note the compacted history carries about calls removed whole. */
 export function indexNote(count: number, indexPath: string): string {
-  return `[jev-governor: ${count} earlier tool call(s) were removed from this conversation to save context; their inputs and outputs are listed in ${indexPath} — read it if you need one]`;
+  return `[jev-governor: ${count} earlier tool call(s) were removed from this conversation to save context; they are listed in ${indexPath} (newest last; search it with grep rather than reading it whole), each with its file in the same folder — read the one you need]`;
 }
 
 /**

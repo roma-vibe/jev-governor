@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveConfig } from '../hooks/lib/config.ts';
-import { learnTurn, S } from '../hooks/mod/state.ts';
+import { addStepUsage, archiveOf, learnTurn, noteToolResult, S, stepKey, turnUsageParts } from '../hooks/mod/state.ts';
 import {
   chooseEffort,
   decideMain,
@@ -293,5 +293,48 @@ describe('correction signal', () => {
       correction: { noul: 0.8 },
     });
     expect(s?.correction).toBe(0.8);
+  });
+});
+
+describe('turn usage and tool errors (0.3.4)', () => {
+  const u = (model: string, read: number) => ({ model, input_tokens: 1, output_tokens: 10, cache_read_input_tokens: read, cache_creation_input_tokens: 5 });
+
+  it('sums step usage per model, the model the turn ended on last; the turn figure only when larger', () => {
+    S.stepUsage.clear();
+    const key = stepKey('t1', 'sub');
+    addStepUsage(key, u('haiku', 100));
+    addStepUsage(key, u('sonnet', 300));
+    addStepUsage(key, u('haiku', 100));
+    addStepUsage(key, null);
+    const parts = turnUsageParts(u('sonnet', 300), S.stepUsage.get(key));
+    expect(parts.map((p) => [p.model, p.usage.cache_read_input_tokens, p.steps, p.from])).toEqual([
+      ['haiku', 200, 2, 'steps'],
+      ['sonnet', 300, 1, 'steps'],
+    ]);
+    // One model: no per-part steps (the turn's own step count stands).
+    expect(turnUsageParts(u('x', 1), new Map([['x', { steps: 3, input_tokens: 3, output_tokens: 30, cache_read_input_tokens: 900, cache_creation_input_tokens: 15 }]]))[0]).toMatchObject({ from: 'steps', usage: { cache_read_input_tokens: 900 } });
+    expect(turnUsageParts(u('x', 5000), new Map([['x', { steps: 1, input_tokens: 1, output_tokens: 10, cache_read_input_tokens: 100, cache_creation_input_tokens: 5 }]]))[0]).toMatchObject({ from: 'turn', usage: { cache_read_input_tokens: 5000 } });
+    expect(turnUsageParts(undefined, undefined)).toEqual([]);
+  });
+
+  it('counts failures within the window and never lowers the count', () => {
+    const t = { errors: 0 };
+    for (const failed of [true, false, false, false, false, false, false, true]) noteToolResult(t, failed, 6);
+    expect(t.errors).toBe(1);
+    for (const failed of [true, false, true]) noteToolResult(t, failed, 6);
+    expect(t.errors).toBe(3);
+    for (let i = 0; i < 10; i++) noteToolResult(t, false, 6);
+    expect(t.errors).toBe(3);
+    const whole = { errors: 0 };
+    for (const failed of [true, false, false, false, false, false, false, true]) noteToolResult(whole, failed, 0);
+    expect(whole.errors).toBe(2);
+  });
+
+  it('tells which saved text a read goes to', () => {
+    const d = '/h/.claude/jev-governor';
+    expect(archiveOf(`D=${d}/outputs/s-1/pruned; cat $D/toolu_1.txt`, d)).toBe('pruned');
+    expect(archiveOf(`cat ${d}/outputs/s-1/folded/a.md`, d)).toBe('folded');
+    expect(archiveOf(`cat ${d}/outputs/s-1/toolu_1.txt`, d)).toBe('trim');
+    expect(archiveOf('/p/s/tool-results/x.txt', d)).toBe('tool-results');
   });
 });

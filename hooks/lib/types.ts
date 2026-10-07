@@ -76,6 +76,12 @@ export type GovernorConfig = {
     effortConfidenceAt: number;
     /** Failed tool calls in one turn before effort goes up one level (0 = never). */
     escalateAfterErrors: number;
+    /**
+     * Errors are counted among this many latest tool results (0 = the whole turn). A long turn
+     * collects scattered failures (a grep with no match, a stale browser ref) that are not the
+     * model being stuck: over the whole turn they raised 71 turns (13 to max), within 6 results 29 (none to max).
+     */
+    errorWindow: number;
     /** `risky` probability that forces at least `high` effort and the strong tier. */
     riskyAt: number;
     /** `continuation` probability that reuses the previous turn's decision. */
@@ -338,6 +344,10 @@ export type LedgerEntry = {
   subagentType?: string;
   created?: boolean;
   usage?: { model: string; input: number; output: number; cacheRead: number; cacheWrite: number };
+  /** `usage`: summed from the turn's steps (0.3.4 on), or the turn's own figure, which starts over at a compaction inside the turn. */
+  usageFrom?: 'steps' | 'turn';
+  /** `output-read`: whose saved text was read (archiveOf). */
+  archive?: 'pruned' | 'folded' | 'trim' | 'tool-results' | 'other';
   jevCost?: number;
   jevMs?: number;
   /**
@@ -362,7 +372,15 @@ export type LedgerEntry = {
     /** Calls put back because Jev would have removed more than `maxPruneRatio`. */
     restored?: number;
     /** Old dialog messages folded (Jev asked about `candidates`; `chars` folded away; outputs/<session>/folded/). */
-    folded?: { candidates: number; folded: number; chars: number; requests: number; byKind: Record<string, number> };
+    folded?: {
+      candidates: number;
+      folded: number;
+      chars: number;
+      requests: number;
+      byKind: Record<string, number>;
+      /** Every candidate as `kind:keep:chars:turnsAgo` (keep = Jev's probability it must stay, 2 decimals): what keepAt is tuned on. */
+      keeps?: string[];
+    };
     /** How our own compaction was started: `$.session.compact` or the `/compact` command (the desktop app). */
     via?: 'api' | 'command';
     /** Claude Code's trigger; `precompute` installs nothing (computed ahead for the compaction that comes). */

@@ -57,7 +57,10 @@ export type TurnState = {
   id: string;
   text: string;
   decision: Promise<MainOutcome | undefined>;
+  /** The most failed tool calls seen within `router.errorWindow` latest results (noteToolResult). */
   errors: number;
+  /** The latest tool results, true for a failure (last `errorWindow`). */
+  recent?: boolean[];
   logged: boolean;
   /** Model requests so far; the request's own model / effort before any rewrite. */
   steps: number;
@@ -79,7 +82,9 @@ export type SubState = {
   model?: string;
   effort: Effort;
   agent?: string;
+  /** As TurnState's. */
   errors: number;
+  recent?: boolean[];
   steps: number;
   escalated?: number;
   /** What the subagent would have run on without the mod. */
@@ -108,6 +113,8 @@ export const S = {
   /** Per chat, kept in the store: `off` — the mod does nothing here; `idle` — compact after a pause here. */
   chat: { off: false, idle: false },
   turn: undefined as TurnState | undefined,
+  /** What each running turn's steps cost so far (`stepKey` → model → totals); see turnUsageParts. */
+  stepUsage: new Map<string, Map<string, StepTotals>>(),
   subs: new Map<string, SubState>(),
   agents: new Map<string, AgentRecord>(),
   skills: new Map<string, SkillRecord>(),
@@ -215,6 +222,94 @@ export function errorText(error: unknown): string {
  * on its own model: `baseModel` is that model, so the report finds no saving in it
  * (an entry without any base reads as an old one and is compared with the assumed base).
  */
+/** Token counts the API reported, as Claude Code passes them (`turn.step` and `turn.complete`). */
+export type ModelTokens = {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+};
+
+/** A turn's requests on one model, summed from its steps. */
+export type StepTotals = ModelTokens & { steps: number };
+
+/** What a turn cost on one model: one `usage` ledger entry. `steps` only when the turn ran on more than one. */
+export type UsagePart = { model: string; usage: ModelTokens; steps?: number; from: 'steps' | 'turn' };
+
+/** The key a running turn's step usage is kept under: a subagent's run is its own turn. */
+export function stepKey(turnId: string, agentId: string | undefined): string {
+  return `${agentId ?? 'main'}:${turnId}`;
+}
+
+const tokensOf = (u: ModelTokens): number => u.input_tokens + u.output_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens;
+
+/** Adds one step's reported usage to its turn's totals (kept in `S.stepUsage`, oldest dropped past 200 turns). */
+export function addStepUsage(key: string, usage: (ModelTokens & { model: string }) | null | undefined): void {
+  if (!usage || typeof usage.model !== 'string') return;
+  let byModel = S.stepUsage.get(key);
+  if (!byModel) {
+    S.stepUsage.set(key, (byModel = new Map()));
+    if (S.stepUsage.size > 200) S.stepUsage.delete(S.stepUsage.keys().next().value as string);
+  }
+  const t = byModel.get(usage.model) ?? { steps: 0, input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+  t.steps++;
+  t.input_tokens += usage.input_tokens || 0;
+  t.output_tokens += usage.output_tokens || 0;
+  t.cache_read_input_tokens += usage.cache_read_input_tokens || 0;
+  t.cache_creation_input_tokens += usage.cache_creation_input_tokens || 0;
+  byModel.set(usage.model, t);
+}
+
+/**
+ * What a finished turn cost, per model. The usage `turn.complete` carries starts over at a
+ * compaction inside the turn (measured 2026-10-07: a 488-step turn with 9 window compactions
+ * reported 0.4M cache-read tokens of the 72M its steps read), so the steps' own usage, summed
+ * as they ran, is used instead. The turn's figure wins only when it is the larger one (a step
+ * the mod did not see: a response a hook below made up). The model the turn ended on goes last.
+ */
+export function turnUsageParts(reported: (ModelTokens & { model: string }) | undefined, counted: Map<string, StepTotals> | undefined): UsagePart[] {
+  const parts = [...(counted ?? new Map<string, StepTotals>()).entries()];
+  const sum = parts.reduce((a, [, t]) => a + tokensOf(t), 0);
+  if (parts.length === 0 || (reported && tokensOf(reported) > sum)) {
+    if (!reported) return [];
+    const { model, ...usage } = reported;
+    return [{ model, usage: { input_tokens: usage.input_tokens, output_tokens: usage.output_tokens, cache_read_input_tokens: usage.cache_read_input_tokens, cache_creation_input_tokens: usage.cache_creation_input_tokens }, from: 'turn' }];
+  }
+  const last = reported?.model;
+  parts.sort(([a], [b]) => (a === last ? 1 : 0) - (b === last ? 1 : 0));
+  return parts.map(([model, { steps, ...usage }]) => ({ model, usage, from: 'steps', ...(parts.length > 1 ? { steps } : {}) }));
+}
+
+/**
+ * Counts a tool result toward effort escalation. `errors` only grows: the most failures seen
+ * within the `window` latest results (0: every failure of the turn), so a cluster of failures
+ * raises effort for the rest of the turn and scattered ones over a long turn do not.
+ */
+export function noteToolResult(state: { errors: number; recent?: boolean[] }, isError: boolean, window: number): void {
+  if (window <= 0) {
+    if (isError) state.errors++;
+    return;
+  }
+  const recent = (state.recent ??= []);
+  recent.push(isError);
+  if (recent.length > window) recent.splice(0, recent.length - window);
+  state.errors = Math.max(state.errors, recent.filter(Boolean).length);
+}
+
+/**
+ * Which of the mod's saved texts a read goes to: the compaction's archive (`pruned`), folded
+ * dialog (`folded`), a trimmed output (`trim`), or Claude Code's own saved output (`tool-results`).
+ * Read from the whole command: a `D=…/pruned; cat $D/x` names the folder without a slash after it.
+ */
+export function archiveOf(target: string, data: string): NonNullable<LedgerEntry['archive']> {
+  const at = target.indexOf(`${data}/outputs/`);
+  if (at >= 0) {
+    const m = /^[^/\s"']+\/(pruned|folded)\b/.exec(target.slice(at + data.length + 9));
+    return m ? (m[1] as 'pruned' | 'folded') : 'trim';
+  }
+  return target.includes('/tool-results/') ? 'tool-results' : 'other';
+}
+
 export function usageBase(
   agentId: string | undefined,
   ranModel: string,
