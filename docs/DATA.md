@@ -10,7 +10,8 @@ every shape is `hooks/lib/types.ts`; validation is `hooks/lib/config.ts`
 ```
 config.json                 GovernorConfig — written with defaults on first run
 openrouter.key              default key file (config.jev.keyFile); env OPENROUTER_API_KEY wins
-agents/<name>.json          AgentRecord, one file per specialist subagent
+agents/<name>.json          AgentRecord, one file per specialist subagent (uses, lastUsedAt;
+                            retiredAt when the mod turned it off to make room)
 skills/<name>.json          SkillRecord, one file per skill
 drafts/<id>.json            DraftRecord: the UI asks, an open Claude Code session drafts
 projects/<id>.json          ProjectRecord: a project page's commands (written by the UI server)
@@ -20,7 +21,7 @@ outputs/<session>/pruned/<tool_use_id>.txt   calls a compaction pruned: input + 
 outputs/<session>/pruned/index.md            one line per pruned call, newest last
 handoffs/<id>.md            a capsule for a new chat (/jevg getctx, /jevg fresh); kept handoff.keepDays (30)
 handoffs/<id>.json          its record: id, cwd, session, title, focus, tokens, sourceTokens, turns, brief, jev, path, attached[]
-ledger/<YYYY-MM-DD>/<session>.jsonl   LedgerEntry per line, written by the mod only
+ledger/<YYYY-MM-DD>/<session>.jsonl   LedgerEntry per line, written by the mod only (`v`: mod version, since 0.3.2)
 ui.pid                      pid of a detached UI server
 ```
 

@@ -57,6 +57,11 @@ let contextTokens = 412_000;
 let jevTier: 'strong' | 'standard' = 'strong';
 /** Routing: the effort score Jev gives. */
 let jevEffortScore = 2;
+/** Specialists: the one Jev picks when it is offered (else none). */
+let jevAgentPick: string | undefined;
+/** Specialists: drafts asked of the model, and the name each one gets. */
+let drafts = 0;
+let draftName = 'packet-grader';
 /** Compaction: drop whole calls too, not only their outputs. */
 let dropCalls = false;
 /** `/clear` ends the conversation; false: it returns and changes nothing. */
@@ -66,7 +71,7 @@ let sessionModel = 'claude-opus-5-5';
 let shellCwd = '/work/app';
 
 function jevReply(body: string): string {
-  const { questions } = JSON.parse(body) as { questions: Record<string, { type: string }> };
+  const { questions } = JSON.parse(body) as { questions: Record<string, { type: string; criteria?: Record<string, string> }> };
   const answers: Record<string, unknown> = {};
   for (const [name, q] of Object.entries(questions)) {
     // Routing: a mid-level Opus task.
@@ -75,6 +80,8 @@ function jevReply(body: string): string {
         jevTier === 'strong'
           ? { choice: 'strong', confidence: 0.6, probabilities: { strong: 0.6, standard: 0.4 } }
           : { choice: 'standard', confidence: 0.95, probabilities: { strong: 0.05, standard: 0.95 } };
+    else if (name === 'agent' && jevAgentPick && q.criteria?.[jevAgentPick])
+      answers[name] = { choice: jevAgentPick, confidence: 0.9, probabilities: { [jevAgentPick]: 0.9 } };
     else if (q.type === 'choice') answers[name] = { choice: 'none', confidence: 0.9, probabilities: { none: 0.9 } };
     else if (q.type === 'score') answers[name] = { score: jevEffortScore, confidence: 0.9, probabilities: { [String(jevEffortScore)]: 1 } };
     // Compaction: drop every candidate's output; handoff: some turns needed.
@@ -181,6 +188,15 @@ const $ = {
     },
   },
   agent: { register: async () => ({}) },
+  model: {
+    // Drafting a specialist takes a while: parallel spawns overlap.
+    complete: async () => {
+      drafts++;
+      for (let i = 0; i < 5; i++) await new Promise<void>((r) => void macrotask(r));
+      const draft = { name: draftName, description: 'Grades a judge packet against the rubric.', prompt: 'You grade packets. Read all, score, write JSON.', tools: ['Read', 'Write'] };
+      return { isAnswered: true, text: JSON.stringify(draft) };
+    },
+  },
   prompt: {
     submit: async (input: { text: string; asUser?: boolean }) => {
       submitted.push(input);
@@ -949,5 +965,44 @@ describe('jev-governor hooks against a fake engine', () => {
       seedConfig('ru');
       await startSession('after-en');
     }
+  });
+
+  it('parallel spawns of one task share one drafted specialist; uses are counted; a full registry retires an idle one', async () => {
+    await startSession('spawn-session');
+    const spawn = (description: string, agentId: string) =>
+      emit(
+        'agent.spawn',
+        { subagentType: 'general-purpose', description, prompt: `${description}: grade packet /tmp/p.md into /tmp/out.json`, parentModel: 'claude-opus-5-5' },
+        async (x: { prompt: string }) => ({ agentId, model: 'claude-opus-5-5', prompt: x.prompt }),
+      );
+    jevAgentPick = 'packet-grader';
+    drafts = 0;
+    const [a, b] = await Promise.all([spawn('Grade packet A', 'sub-a'), spawn('Grade packet B (v2)', 'sub-b')]);
+    expect(drafts).toBe(1);
+    expect(a.prompt.startsWith('<role>')).toBe(true);
+    expect(b.prompt.startsWith('<role>')).toBe(true);
+    expect(JSON.parse(files.get(`${DATA}/agents/packet-grader.json`)!).uses).toBe(2);
+    const ledger = [...files.entries()].filter(([p]) => p.endsWith('spawn-session.jsonl')).flatMap(([, t]) => t.split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+    expect(ledger.filter((e) => e.kind === 'agent-created')).toHaveLength(1);
+    expect(ledger.every((e) => e.v === '0.3.2')).toBe(true);
+
+    // Full registry: the long-idle specialist is turned off to make room for the new draft.
+    const config = JSON.parse(files.get(`${DATA}/config.json`)!);
+    const keptAgents = { ...config.agents };
+    config.agents.maxAgents = 2;
+    files.set(`${DATA}/config.json`, JSON.stringify(config));
+    const grader = JSON.parse(files.get(`${DATA}/agents/packet-grader.json`)!);
+    files.set(`${DATA}/agents/old-idle.json`, JSON.stringify({ ...grader, name: 'old-idle', description: 'Formats changelogs.', uses: 0, lastUsedAt: '2026-01-01T00:00:00.000Z' }));
+    jevAgentPick = undefined;
+    draftName = 'deploy-checker';
+    await startSession('spawn-session');
+    await spawn('Check the deploy', 'sub-c');
+    expect(drafts).toBe(2);
+    expect(JSON.parse(files.get(`${DATA}/agents/old-idle.json`)!).enabled).toBe(false);
+    expect(JSON.parse(files.get(`${DATA}/agents/packet-grader.json`)!).enabled).toBe(true);
+    expect(JSON.parse(files.get(`${DATA}/agents/deploy-checker.json`)!).enabled).toBe(true);
+    config.agents = keptAgents;
+    files.set(`${DATA}/config.json`, JSON.stringify(config));
+    draftName = 'packet-grader';
   });
 });

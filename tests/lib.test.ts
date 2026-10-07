@@ -202,3 +202,29 @@ describe('registry', () => {
     expect(uniqueName('x-y', new Set(['x-y', 'x-y-2']))).toBe('x-y-3');
   });
 });
+
+describe('mod version', () => {
+  it('matches package.json and the plugin manifest', async () => {
+    const { MOD_VERSION } = await import('../hooks/lib/version.ts');
+    const { readFileSync } = (await import('node:fs' as string)) as { readFileSync: (p: string, e: string) => string };
+    for (const file of ['package.json', '.claude-plugin/plugin.json', 'ui/package.json']) {
+      expect(JSON.parse(readFileSync(file, 'utf8')).version).toBe(MOD_VERSION);
+    }
+  });
+});
+
+describe('retiring specialists', () => {
+  it('picks the least used, longest idle auto-drafted one past the idle days', async () => {
+    const { retireCandidate } = await import('../hooks/lib/registry.ts');
+    const base: Omit<AgentRecord, 'name'> = { description: 'd', prompt: 'p', skills: [], tier: 'auto', effort: 'auto', enabled: true, origin: 'auto', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' };
+    const now = Date.parse('2026-10-07T00:00:00Z');
+    const agents: AgentRecord[] = [
+      { ...base, name: 'busy', uses: 9, lastUsedAt: '2026-09-01T00:00:00Z' },
+      { ...base, name: 'idle', uses: 1, lastUsedAt: '2026-08-01T00:00:00Z' },
+      { ...base, name: 'recent', uses: 0, lastUsedAt: '2026-10-06T00:00:00Z' },
+      { ...base, name: 'mine', origin: 'manual' },
+    ];
+    expect(retireCandidate(agents, now, 14)?.name).toBe('idle');
+    expect(retireCandidate(agents.filter((a) => a.name === 'recent'), now, 14)).toBeUndefined();
+  });
+});

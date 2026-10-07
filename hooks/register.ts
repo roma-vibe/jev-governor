@@ -9,6 +9,7 @@ import type { EngineInterface, Register } from 'claude-code';
 
 import type { Message } from './lib/compaction/types.ts';
 
+import { MOD_VERSION } from './lib/version.ts';
 import { budgetPressure, describePressure, type Pressure } from './lib/budget.ts';
 import { archiveText, editedPath, indexLine, isPointerText, rerunKey, withPointers, type PrunedCall } from './lib/archive.ts';
 import {
@@ -48,6 +49,7 @@ import {
   parseDraft,
   PLUGIN,
   rankCandidates,
+  retireCandidate,
   sanitizeAgent,
   sanitizeSkill,
   withRolePreamble,
@@ -194,8 +196,11 @@ async function applyAutoWindow($: EngineInterface, log: boolean): Promise<void> 
       await $.env.set('JEV_GOVERNOR_AUTO_WINDOW', undefined);
     }
     S.autoWindow = by === 'mod' ? want : undefined;
-    if (!log || S.autoWindowLogged === S.session) return;
-    S.autoWindowLogged = S.session;
+    // Once per session and version: a reload into new code logs again, so the monitor sees
+    // which code a long session runs and whether its window took.
+    const logKey = `${S.session}@${MOD_VERSION}`;
+    if (!log || S.autoWindowLogged === logKey) return;
+    S.autoWindowLogged = logKey;
     let tokens: number | undefined;
     let source: string | undefined;
     try {
@@ -330,7 +335,7 @@ async function persistAgent($: EngineInterface, agent: AgentRecord, skills: read
 async function ledger($: EngineInterface, entry: Omit<LedgerEntry, 'ts' | 'session'>): Promise<void> {
   if (!S.data) return;
   const ts = nowIso();
-  const line = JSON.stringify({ ts, session: S.session, project: S.project, ...entry });
+  const line = JSON.stringify({ ts, session: S.session, project: S.project, v: MOD_VERSION, ...entry });
   const path = `${S.data}/ledger/${ts.slice(0, 10)}/${S.session}.jsonl`;
   const run = async (): Promise<void> => {
     let lines = S.ledgerLines.get(path);
@@ -650,6 +655,7 @@ async function planSpawn(
   await refreshCwd($);
   const cfg = S.cfg;
   if (await loadRegistry($)) await registerAll($);
+  const known = new Set(S.agents.keys());
   const ownName = e.subagentType.startsWith(`${PLUGIN}:`) ? e.subagentType.slice(PLUGIN.length + 1) : undefined;
   const remap = cfg.agents.enabled && cfg.agents.remapFrom.includes(e.subagentType);
   const candidates = remap ? rankCandidates([...S.agents.values()], `${e.description} ${e.prompt}`, MAX_CANDIDATES) : [];
@@ -686,22 +692,11 @@ async function planSpawn(
     const p = pick ? (pick.probabilities[pick.choice] ?? 0) : 0;
     if (pick && pick.choice !== NONE && p >= cfg.agents.matchAt && S.agents.get(pick.choice)?.enabled) {
       agent = S.agents.get(pick.choice);
-    } else if (cfg.agents.autoCreate && !shadow() && S.agents.size < cfg.agents.maxAgents) {
-      // Parallel spawns of the same kind share one draft.
-      const key = e.description.toLowerCase().slice(0, 60);
-      let pending = S.creating.get(key);
-      if (!pending) {
-        pending = createAgent($, { title: e.description, task: e.prompt }).catch(async (error) => {
-          await ledger($, { kind: 'error', error: `create agent: ${errorText(error)}` });
-          return undefined;
-        });
-        S.creating.set(key, pending);
-      }
-      agent = await pending;
-      S.creating.delete(key);
-      created = agent !== undefined;
+    } else if (cfg.agents.autoCreate && !shadow()) {
+      ({ agent, created } = await draftOrReuse($, e, known));
     }
   }
+  if (agent && !created && (remap || ownName)) void noteUse($, agent);
 
   const signals = asked ? readSignals(asked.response.answers) : undefined;
   const pinnedTier = agent && agent.tier !== 'auto' ? agent.tier : undefined;
@@ -745,6 +740,88 @@ async function planSpawn(
     jevMs: asked?.ms,
     jevCost: asked?.response.usage?.cost,
   };
+}
+
+/** Days without a run before a full registry may turn an auto-drafted specialist off. */
+const RETIRE_IDLE_DAYS = 14;
+
+/**
+ * Drafts a specialist for a spawn no existing one fits, one draft at a time. Parallel spawns
+ * of one task otherwise drafted near-copies (`judge-packet-v2-grader` and `-grader-2` four
+ * seconds apart): a spawn that waited first asks Jev whether a specialist drafted meanwhile
+ * fits, and a new draft sees every earlier one. A full registry turns off its longest-idle
+ * auto-drafted specialist to make room.
+ */
+async function draftOrReuse(
+  $: EngineInterface,
+  e: { description: string; prompt: string },
+  known: ReadonlySet<string>,
+): Promise<{ agent?: AgentRecord; created: boolean }> {
+  const prior = S.draftLock;
+  let release = (): void => undefined;
+  S.draftLock = new Promise<void>((resolve) => (release = resolve));
+  try {
+    await prior;
+    const fresh = [...S.agents.values()].filter((a) => a.enabled && !known.has(a.name));
+    if (fresh.length > 0) {
+      const asked = await askJev(
+        $,
+        { context: SUBAGENT_STATE_CONTEXT, project: S.project, task_title: e.description, task: clip(e.prompt, 6000, 1000) },
+        { agent: agentQuestion(fresh) },
+        undefined,
+        'subagent',
+      );
+      const pick = asked ? choice(asked.response.answers, 'agent') : undefined;
+      const p = pick ? (pick.probabilities[pick.choice] ?? 0) : 0;
+      const reuse = pick && pick.choice !== NONE && p >= S.cfg.agents.matchAt ? S.agents.get(pick.choice) : undefined;
+      if (reuse?.enabled) return { agent: reuse, created: false };
+    }
+    const enabled = [...S.agents.values()].filter((a) => a.enabled);
+    if (enabled.length >= S.cfg.agents.maxAgents) {
+      const old = retireCandidate(enabled, Date.now(), RETIRE_IDLE_DAYS);
+      if (!old) return { created: false };
+      await retireAgent($, old);
+    }
+    const agent = await createAgent($, { title: e.description, task: e.prompt }).catch(async (error) => {
+      await ledger($, { kind: 'error', error: `create agent: ${errorText(error)}` });
+      return undefined;
+    });
+    if (agent) await noteUse($, agent);
+    return { agent, created: agent !== undefined };
+  } finally {
+    release();
+  }
+}
+
+async function retireAgent($: EngineInterface, agent: AgentRecord): Promise<void> {
+  const now = nowIso();
+  const off: AgentRecord = { ...agent, enabled: false, retiredAt: now, updatedAt: now };
+  try {
+    await $.fs.write(`${S.data}/agents/${agent.name}.json`, `${JSON.stringify(off, null, 2)}\n`);
+    S.agents.set(agent.name, off);
+    S.registrySig = await registrySignature($);
+    await ledger($, {
+      kind: 'agent-created',
+      agent: agent.name,
+      text: `retired: registry full (${S.cfg.agents.maxAgents})`,
+      reasons: [`uses ${agent.uses ?? 0}, last ${(agent.lastUsedAt ?? agent.createdAt).slice(0, 10)}`],
+    });
+  } catch (error) {
+    await ledger($, { kind: 'error', error: `retire ${agent.name}: ${errorText(error)}` });
+  }
+}
+
+/** Counts a spawn the specialist ran (what a full registry retires by). */
+async function noteUse($: EngineInterface, agent: AgentRecord): Promise<void> {
+  const current = S.agents.get(agent.name) ?? agent;
+  const used: AgentRecord = { ...current, uses: (current.uses ?? 0) + 1, lastUsedAt: nowIso() };
+  try {
+    await $.fs.write(`${S.data}/agents/${agent.name}.json`, `${JSON.stringify(used, null, 2)}\n`);
+    S.agents.set(agent.name, used);
+    S.registrySig = await registrySignature($);
+  } catch {
+    // best effort: a missed count only makes the specialist look idler
+  }
 }
 
 /**
@@ -1770,6 +1847,7 @@ export const register: Register = (on) => {
       S.registrySig = '';
       await loadRegistry($);
       await registerAll($);
+      await applyAutoWindow($, true);
       return { text: `Reloaded. ${S.agents.size} agents, ${S.skills.size} skills, key ${S.key ? 'found' : 'missing'}.` };
     }
     return { text: await statusReport($) };

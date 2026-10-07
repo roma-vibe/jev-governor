@@ -64,7 +64,11 @@ agent.spawn (not a fork)
   ├─ none fits & autoCreate                → $.model.complete (Sonnet 5.5, low effort)
   │                                          drafts {name, description, prompt, tools,
   │                                          reuse_skills, new_skills} → saved to the registry,
-  │                                          used for this task and every similar one later
+  │                                          used for this task and every similar one later;
+  │                                          one draft at a time: a spawn that waited asks Jev
+  │                                          whether the specialist drafted meanwhile fits first;
+  │                                          a full registry (maxAgents) turns off the longest-idle
+  │                                          auto-drafted one (no run for 14 days, `uses` counted)
   └─ model = Sonnet/Opus by P(opus) vs bar (search agents +0.2), effort per step
 ```
 

@@ -237,6 +237,11 @@ export type AgentRecord = {
   effort: Effort | 'auto';
   enabled: boolean;
   origin: 'auto' | 'manual';
+  /** Spawns it ran (since 0.3.2), and the last one. */
+  uses?: number;
+  lastUsedAt?: string;
+  /** Turned off by the mod to make room in a full registry (`enabled` false). */
+  retiredAt?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -286,6 +291,8 @@ export type LedgerEntry = {
   ts: string;
   session: string;
   kind: LedgerKind;
+  /** The mod version that wrote it (since 0.3.2). */
+  v?: string;
   scope?: 'main' | 'subagent';
   agentId?: string;
   project?: string;

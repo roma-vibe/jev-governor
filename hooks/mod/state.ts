@@ -116,7 +116,8 @@ export const S = {
   compacting: false,
   draftsBusy: false,
   describeBusy: false,
-  creating: new Map<string, Promise<AgentRecord | undefined>>(),
+  /** Drafting a specialist, one at a time: parallel spawns wait and may reuse what was just drafted. */
+  draftLock: Promise.resolve() as Promise<void>,
   /** tool_use_id → the call, so a result row knows its tool and command. */
   /** Tool calls by id; `persisted` is where Claude Code saved a Bash output too big to inline. */
   calls: new Map<string, { tool: string; command?: string; agentId?: string; persisted?: string }>(),
@@ -126,7 +127,7 @@ export const S = {
   compactReason: undefined as 'threshold' | 'return' | undefined,
   /** The auto-compaction window the mod set for this process (`compaction.autoWindowTokens`); undefined when it did not. */
   autoWindow: undefined as number | undefined,
-  /** The session whose window was logged (once per session). */
+  /** `<session>@<version>` whose window was logged (once per session and loaded version). */
   autoWindowLogged: undefined as string | undefined,
   /** How it was started: the API, or `/compact` where the API is unavailable (the desktop app). */
   compactVia: undefined as 'api' | 'command' | undefined,

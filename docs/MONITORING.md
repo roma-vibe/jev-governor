@@ -37,6 +37,7 @@ node scripts/monitor.mjs --days 1
 - user corrections after Sonnet and Opus, after low/medium and high (the `correction` question), your `/model` and effort changes (`override`);
 - accesses to pruned content per compaction: `pruned/` reads and reruns (`rerun-after-prune`); reads of Claude Code's saved outputs (`tool-results/`) are separate, not counted;
 - compaction started via `/compact` in the app (`compaction.via`);
+- sessions that never got the auto-compaction window (no `window` record: bound before 0.2.6 and never reloaded) and sessions on an older mod version (`v` in the ledger, since 0.3.2);
 - ledger files at the 5000-line limit;
 - secret replacements in requests to Jev (`redacted`);
 - subagent context, spend across all transcript steps (main dialogue and subagents separately) and subagent cache rebuilds after pauses longer than 5 minutes;

@@ -80,9 +80,23 @@ export function sanitizeAgent(raw: unknown, now: string): AgentRecord | undefine
     effort: isEffort(r.effort) ? r.effort : 'auto',
     enabled: r.enabled !== false,
     origin: r.origin === 'manual' ? 'manual' : 'auto',
+    ...(typeof r.uses === 'number' && Number.isFinite(r.uses) && r.uses >= 0 ? { uses: Math.floor(r.uses) } : {}),
+    ...(typeof r.lastUsedAt === 'string' ? { lastUsedAt: r.lastUsedAt } : {}),
+    ...(typeof r.retiredAt === 'string' ? { retiredAt: r.retiredAt } : {}),
     createdAt: typeof r.createdAt === 'string' ? r.createdAt : now,
     updatedAt: typeof r.updatedAt === 'string' ? r.updatedAt : now,
   };
+}
+
+/**
+ * The specialist to turn off when the registry is full: an auto-drafted, enabled one that
+ * has not run for `idleDays` (by its last use, else its creation), the least used and oldest first.
+ */
+export function retireCandidate(agents: readonly AgentRecord[], now: number, idleDays: number): AgentRecord | undefined {
+  const last = (a: AgentRecord): number => Date.parse(a.lastUsedAt ?? a.createdAt) || 0;
+  return agents
+    .filter((a) => a.enabled && a.origin === 'auto' && now - last(a) >= idleDays * 86_400_000)
+    .sort((a, b) => (a.uses ?? 0) - (b.uses ?? 0) || last(a) - last(b))[0];
 }
 
 export function sanitizeSkill(raw: unknown, now: string): SkillRecord | undefined {

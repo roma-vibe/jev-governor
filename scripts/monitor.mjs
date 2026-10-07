@@ -148,7 +148,11 @@ function parse(line) {
 
 // ----------------------------------------------------------------- ledger --
 
-/** Every ledger entry in the window (one without a session is skipped), and every session that has a ledger file on any day. */
+/**
+ * Every ledger entry in the window (one without a session is skipped), every session that has a
+ * ledger file on any day, and per session over all days: whether a `window` entry was ever logged
+ * (bindSession of 0.2.6+) and the last mod version that wrote to it (`v`, since 0.3.2).
+ */
 async function loadLedger() {
   const root = path.join(DATA, 'ledger');
   let days = [];
@@ -160,6 +164,8 @@ async function loadLedger() {
   const entries = [];
   const sessions = new Set();
   const files = [];
+  /** session → { window: boolean, v?: string } */
+  const bound = new Map();
   const firstDay = new Date(from).toISOString().slice(0, 10);
   for (const day of days) {
     let names = [];
@@ -170,9 +176,15 @@ async function loadLedger() {
     }
     for (const name of names) {
       if (!name.endsWith('.jsonl')) continue;
-      sessions.add(name.slice(0, -6));
-      if (day < firstDay) continue;
+      const id = name.slice(0, -6);
+      sessions.add(id);
       const lines = await readLines(path.join(root, day, name));
+      const meta = bound.get(id) ?? { window: false };
+      if (!meta.window && lines.some((l) => l.includes('"kind":"window"'))) meta.window = true;
+      const v = lines.length ? /"v":"([^"]+)"/.exec(lines[lines.length - 1])?.[1] : undefined;
+      if (v) meta.v = v;
+      bound.set(id, meta);
+      if (day < firstDay) continue;
       files.push({ day, session: name.slice(0, -6), lines: lines.length });
       for (const line of lines) {
         const e = parse(line);
@@ -181,7 +193,7 @@ async function loadLedger() {
     }
   }
   entries.sort((a, b) => a.ts.localeCompare(b.ts));
-  return { entries, sessions, files };
+  return { entries, sessions, files, bound };
 }
 
 // ------------------------------------------------------------ transcripts --
@@ -346,7 +358,7 @@ function familyName(model) {
 }
 
 async function main() {
-  const [{ entries, sessions: ledgerSessions, files }, transcripts] = await Promise.all([loadLedger(), loadTranscripts()]);
+  const [{ entries, sessions: ledgerSessions, files, bound }, transcripts] = await Promise.all([loadLedger(), loadTranscripts()]);
   let config;
   try {
     config = resolveConfig(JSON.parse(await fs.readFile(path.join(DATA, 'config.json'), 'utf8')));
@@ -374,6 +386,21 @@ async function main() {
       missing.length > 15 ? `- … и ещё ${missing.length - 15}` : undefined,
     ]),
   );
+  // Long sessions run the code they bound with: a reload that never came leaves them on an old
+  // version, without the auto-compaction window (no `window` entry ever) or later fixes.
+  const current = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
+  const loaded = humanSessions.filter((s) => ledgerSessions.has(s.id));
+  const noWindow = loaded.filter((s) => !bound.get(s.id)?.window);
+  const stale = loaded.filter((s) => bound.get(s.id)?.window && bound.get(s.id)?.v !== current);
+  const ctxMedian = (s) => k(median(s.steps.map((st) => st.context).filter((n) => n > 0)));
+  out[out.length - 1] = out[out.length - 1].replace(/\n$/, '') + '\n' + [
+    `Без окна автосжатия (мод старше 0.2.6, не перезагрузился): **${noWindow.length}**; на старой версии мода (текущая ${current}; до 0.3.2 версия не пишется): ${stale.length}.`,
+    ...noWindow.slice(0, 10).map((s) => `- без окна: ${s.project} · ${s.id.slice(0, 8)} · медиана контекста ${ctxMedian(s)} · последний запрос ${s.prompts[s.prompts.length - 1]?.ts.slice(0, 16)}`),
+    ...stale.slice(0, 10).map((s) => `- версия ${bound.get(s.id)?.v ?? '< 0.3.2'}: ${s.project} · ${s.id.slice(0, 8)}`),
+  ].join('\n') + '\n';
+  if (noWindow.length > 0) {
+    advice.push(`${noWindow.length} сессий работают без окна автосжатия (контекст растёт до 1M): закройте и откройте их снова (продолжение чата подхватит текущий код мода).`);
+  }
   if (missing.length > 0) {
     advice.push(
       `В ${missing.length} сессиях мод не загрузился (или они начались до его подключения). Проверьте \`npm run validate\` и строку \`jev ▸\` в новом чате.`,
