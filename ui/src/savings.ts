@@ -16,7 +16,7 @@ export function getSources(): { key: SavingSource; label: string; estimate?: boo
 export const sourceLabel = (key: SavingSource): string =>
   (key === 'effort' ? t('Effort level') : getSources().find((s) => s.key === key)?.label) ?? key;
 
-const FAMILIES: Record<string, string> = { opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku', fable: 'Fable' };
+const FAMILIES: Record<string, string> = { opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku', haiku4: 'Haiku 4', fable: 'Fable' };
 const family = (f: string | undefined): string => (f ? (FAMILIES[f] ?? f) : '?');
 
 function reasonLabel(reason: string): string {

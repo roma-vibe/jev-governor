@@ -1,6 +1,6 @@
 {
   "name": "jev-governor",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Jev-guided model, effort and subagent routing for Claude Code (Opus 5.5 / Sonnet 5.5), auto-created specialist subagents and Jev-pruned compaction.",
   "author": { "name": "roma-vibe" },
   "license": "MIT"

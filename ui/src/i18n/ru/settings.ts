@@ -103,17 +103,17 @@ export default {
   'Shadow (only record what it would choose)': 'Наблюдение (только записывать, что выбрал бы)',
   'On': 'Включена',
   'Off': 'Выключена',
-  'Read-only subagents with an easy task (search, listing, reading files) can run on Haiku: its cache reads cost half as much, and reading is where subagents spend. It never applies to subagents that can edit, to risky tasks, or to ones that need reasoning. If the task grows (many steps) or tools keep failing, the subagent moves to the standard model.':
-    'Субагенты, которые только читают и получили простую задачу (поиск, список, чтение файлов), могут работать на Haiku: чтение кэша у него вдвое дешевле, а субагенты тратят именно на чтение. Не применяется к субагентам, которые могут править файлы, к рискованным задачам и к тем, где нужны рассуждения. Если задача разрастается (много шагов) или инструменты падают, субагент переходит на стандартную модель.',
+  'Read-only subagents with an easy task (search, listing, reading files) can run on Haiku 5.5: under a 100K-token prompt it costs a twentieth of Sonnet (cache reads $0.01 against $0.20 per million), above that a quarter, and reading is where subagents spend. It never applies to subagents that can edit, to risky tasks, or to ones that need reasoning. If the task grows (many steps) or tools keep failing, the subagent moves to the standard model.':
+    'Субагенты, которые только читают и получили простую задачу (поиск, список, чтение файлов), могут работать на Haiku 5.5: при промпте до 100K токенов она в 20 раз дешевле Sonnet (чтение кэша $0.01 против $0.20 за миллион), выше — в 4 раза, а субагенты тратят именно на чтение. Не применяется к субагентам, которые могут править файлы, к рискованным задачам и к тем, где нужны рассуждения. Если задача разрастается (много шагов) или инструменты падают, субагент переходит на стандартную модель.',
   'Light model: Opus probability below': 'Лёгкая модель: вероятность Opus ниже',
   'A subagent goes to the light model only when the probability that it needs Opus is below this.':
     'Субагент уходит на лёгкую модель, только если вероятность, что ему нужен Opus, ниже этого значения.',
   'Light model: steps before moving up': 'Лёгкая модель: шагов до перехода выше',
-  'The light model has a smaller context window. After this many steps the subagent moves to the standard model.':
-    'У лёгкой модели окно контекста меньше. После этого числа шагов субагент переходит на стандартную модель.',
+  'A task that keeps going is no longer a quick search. After this many steps the subagent moves to the standard model.':
+    'Задача, которая всё тянется, — уже не быстрый поиск. После стольких шагов субагент переходит на стандартную модель.',
   'Light model (Haiku)': 'Лёгкая модель (Haiku)',
-  'Model for read-only subagents with an easy task, when “Light model for reading subagents” is on. It has no effort setting.':
-    'Модель для читающих субагентов с простой задачей, когда включена «Лёгкая модель для читающих субагентов». Уровня усилия у неё нет.',
+  'Model for read-only subagents with an easy task, when “Light model for reading subagents” is on. Haiku 5.5 takes the effort chosen for the task.':
+    'Модель для читающих субагентов с простой задачей, когда включена «Лёгкая модель для читающих субагентов». Haiku 5.5 получает усилие, выбранное для задачи.',
   'The probability that Opus is needed at which a subagent is launched on Opus. A lower threshold means more subagents on Opus (higher quality, more spending).':
     'Вероятность, что нужна Opus, при которой субагент запускается на Opus. Ниже порог — больше субагентов на Opus (качество выше, расход больше).',
   'Specialist agents': 'Агенты-специалисты',
@@ -374,7 +374,7 @@ export default {
   'Models & agents': 'Модели и агенты',
   'Which models and effort levels the mod picks for the main chat and subagents, and the specialist agents.': 'Какие модели и уровни effort мод выбирает для основного чата и субагентов, и агенты-специалисты.',
   'Context': 'Контекст',
-  'Context compaction, handoff to a new chat, and trimming of large outputs.': 'Сжатие контекста, перенос в новый чат и обрезка больших выводов.',
+  'Context compaction, handoff to a new chat, long-term memory, and trimming of large outputs.': 'Сжатие контекста, перенос в новый чат, долговременная память и обрезка больших выводов.',
   'Projects & savings': 'Проекты и экономия',
   'The project panel with its commands, and how the savings are counted.': 'Панель проектов с командами и подсчёт экономии.',
   '{n} {n#section|sections}': '{n} {n#раздел|раздела|разделов}',
@@ -397,4 +397,54 @@ export default {
     'Проверка на лог: порог вероятности',
   'An output is trimmed as a log only if Jev\'s probability that it is a log is at least this. Measured on 7 October: real script and report outputs got at most 0.29, real logs (push, deploy, docker compose, dev server) 0.55–0.80. Higher means safer and rarer.':
     'Вывод обрезается как лог, только если вероятность «это лог» по оценке Jev не ниже этого значения. Замер 7 октября: реальные выводы скриптов и отчётов получили не больше 0,29, реальные логи (push, деплой, docker compose, dev-сервер) — 0,55–0,80. Выше — безопаснее и реже.',
+  "Long-term memory":
+    "Долговременная память",
+  "A memory server (Mnema, through its MCP) keeps what earlier chats decided and learned. A new chat and every subagent start cold and find such things again by reading files, and reading is most of the bill. The mod asks the memory itself, without a model step, and adds a few hundred tokens of notes to the first task of a chat and to subagent tasks; with nothing relevant stored it adds nothing. The handoff brief is saved to the memory. Turn on and check: /jevg memory on, /jevg memory.":
+    "Сервер памяти (Mnema, через свой MCP) хранит то, что решили и узнали прошлые чаты. Новый чат и каждый субагент начинают с нуля и находят это заново, читая файлы, а чтение — основная часть счёта. Мод сам спрашивает память, без шага модели, и добавляет несколько сотен токенов заметок к первой задаче чата и к задачам субагентов; если ничего подходящего нет, ничего не добавляет. Бриф переноса сохраняется в память. Включить и проверить: /jevg memory on, /jevg memory.",
+  "Off: the mod does not call the memory and the model is refused its tools (a stray call costs nothing more than the refusal).":
+    "Выключена — мод не обращается к памяти, а модели в её инструментах отказывается (случайный вызов стоит не больше отказа).",
+  "MCP server name":
+    "Имя MCP-сервера",
+  "The name the memory MCP server is added under (claude mcp add <name> ...).":
+    "Имя, под которым добавлен MCP-сервер памяти (claude mcp add <имя> ...).",
+  "Notes for the first task of a chat":
+    "Заметки к первой задаче чата",
+  "The first prompt of a chat that states a task gets the notes on it, once per chat. Not when a capsule from an old chat is attached: it already carries the context.":
+    "Первое сообщение чата с задачей получает заметки по ней, один раз за чат. Не тогда, когда подключена капсула старого чата: контекст уже в ней.",
+  "Notes for subagents":
+    "Заметки для субагентов",
+  "A subagent with a real task gets the notes on it appended to its prompt. The recall runs while the model is chosen, so it adds almost no wait.":
+    "Субагент с настоящей задачей получает заметки по ней в конце промпта. Recall идёт параллельно с выбором модели, так что почти не добавляет ожидания.",
+  "Subagent task from":
+    "Задача субагента от",
+  "Shorter subagent prompts (a quick lookup) get no notes.":
+    "Более короткие промпты субагентов (быстрый поиск) заметок не получают.",
+  "Save the handoff brief":
+    "Сохранять бриф переноса",
+  "The brief /jevg getctx and /jevg fresh write (goal, decisions and why, what is open) is saved to the project memory in the background.":
+    "Бриф, который пишут /jevg getctx и /jevg fresh (цель, решения и почему, что открыто), сохраняется в память проекта в фоне.",
+  "Let the model use the memory tools":
+    "Модель может пользоваться инструментами памяти",
+  "The model may save facts and recall on its own. Each call is a step over the whole context; the notes the mod adds tell it the task is already recalled. Off: its memory calls are refused and the notes carry no ids.":
+    "Модель может сама сохранять факты и вызывать recall. Каждый вызов — шаг поверх всего контекста; заметки мода говорят ей, что recall по задаче уже сделан. Выключено — её вызовы памяти отклоняются, а в заметках нет id.",
+  "Facts at most":
+    "Фактов не больше",
+  "How many facts one recall adds.":
+    "Сколько фактов добавляет один recall.",
+  "Notes size":
+    "Размер заметок",
+  "Upper limit of the notes added to a prompt (~3.5 characters per token).":
+    "Верхняя граница заметок, добавляемых к промпту (~3,5 символа на токен).",
+  "Memory timeout":
+    "Таймаут памяти",
+  "A recall that takes longer is dropped and the prompt goes without notes. After a failure the memory is left alone for a minute.":
+    "Recall дольше этого отбрасывается, и сообщение уходит без заметок. После сбоя память не трогается минуту.",
+  "Start the local server":
+    "Запускать локальный сервер",
+  "When the memory server does not answer, the mod starts it (scripts/mnema-local.sh start, or the command below) at most once in 10 minutes.":
+    "Если сервер памяти не отвечает, мод запускает его (scripts/mnema-local.sh start или команда ниже), не чаще раза в 10 минут.",
+  "Start command":
+    "Команда запуска",
+  "A shell command that starts the memory server. Empty: the script that comes with the mod.":
+    "Команда shell, запускающая сервер памяти. Пусто — скрипт, который идёт с модом.",
 } as Record<string, string>;

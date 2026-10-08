@@ -37,6 +37,7 @@ import { resolveLang, systemLocales } from './lib/lang.ts';
 import { expandHome, isExcluded, resolveConfig } from './lib/config.ts';
 import { clip, estimateContextTokens, recentHistory, type HistoryMessage } from './lib/history.ts';
 import { choice, jevAsker, noul, withTimeout, type JevAsker, type JevQuestions, type JevResponse } from './lib/jev.ts';
+import { isMemoryTool, looksDown, memoryBlock, parseRecall, recallTask, resultText as memoryText, sessionSummary, type RecallResult } from './lib/memory.ts';
 import { displayModel } from './lib/providers.ts';
 import { redact } from './lib/redact.ts';
 import { chunkQuestions, isClaudeSavedOutput, isLogCandidate, isRunnerCommand, LOG_KEY_LINES, logQuestion, persistedOutputPath, MIN_TRIM_GAIN, planTrim, renderTrim, trimKind, worthTrimming, type Chunk } from './lib/trim.ts';
@@ -68,6 +69,7 @@ import {
   readSignals,
   SUBAGENT_STATE_CONTEXT,
   subagentQuestions,
+  takesEffort,
   tierOf,
   type Decision,
 } from './lib/router.ts';
@@ -1573,6 +1575,7 @@ async function finishHandoff(
       attached: [],
     };
     await $.fs.write(`${handoffDir()}/${id}.json`, `${JSON.stringify(record, null, 2)}\n`);
+    saveHandoff($, brief, focus || title);
     const prompt = pastePrompt(meta, path, title, S.lang);
     // /jevg fresh copies it only should the clear fail.
     const copied = fresh ? false : await copyText($, prompt);
@@ -1747,6 +1750,173 @@ async function processDrafts($: EngineInterface): Promise<void> {
     await ledger($, { kind: 'error', error: `drafts: ${errorText(error)}` });
   } finally {
     S.draftsBusy = false;
+  }
+}
+
+
+// ----------------------------------------------------------------- memory --
+
+/** The memory option is on and the mod works in this chat. */
+function memoryOn(): boolean {
+  return active() && S.cfg.memory.enabled;
+}
+
+/** After a failed call the memory is left alone this long. */
+const MEMORY_RETRY_MS = 60_000;
+/** The local server is started at most this often. */
+const MEMORY_START_EVERY_MS = 10 * 60_000;
+
+/** Starts the local memory server (`memory.startCommand`, else scripts/mnema-local.sh start). */
+async function startMemoryServer($: EngineInterface): Promise<boolean> {
+  S.memory.startedAt = Date.now();
+  const command = S.cfg.memory.startCommand.trim();
+  const argv = command ? ['/bin/sh', '-c', command] : ['/bin/sh', `${$.plugin.root}/scripts/mnema-local.sh`, 'start'];
+  const started = Date.now();
+  let error: string | undefined;
+  try {
+    const run = await $.process.run(argv, { timeoutMs: 20_000 });
+    if (run.exitCode !== 0) error = clip((run.stderr || run.stdout || `exit ${run.exitCode}`).trim(), 200);
+  } catch (e) {
+    error = clip(errorText(e), 200);
+  }
+  await ledger($, { kind: 'memory', memory: { action: 'start', ok: !error, ms: Date.now() - started, ...(error ? { error } : {}) } });
+  return !error;
+}
+
+/**
+ * Calls one of the memory server's tools. A server that does not answer is started once
+ * (`memory.autoStart`, at most every 10 minutes) and asked again; after a failure the memory
+ * is left alone for a minute, so a stopped server costs one timeout, not one per prompt.
+ */
+async function callMemory($: EngineInterface, tool: string, args: Record<string, unknown>): Promise<RecallResult> {
+  const m = S.cfg.memory;
+  if (Date.now() < S.memory.downUntil) throw new Error(S.memory.lastError ?? 'memory server unavailable');
+  const once = async (): Promise<RecallResult> => {
+    const result = await withTimeout($.mcp.call(m.server, tool, args), (ms) => $.clock.sleep(ms), m.timeoutMs);
+    if (result.isError) throw new Error(memoryText(result).trim() || `${tool} failed`);
+    return result;
+  };
+  try {
+    const result = await once();
+    S.memory.lastError = undefined;
+    return result;
+  } catch (error) {
+    let message = errorText(error);
+    if (m.autoStart && looksDown(message) && Date.now() - S.memory.startedAt > MEMORY_START_EVERY_MS && (await startMemoryServer($))) {
+      try {
+        const result = await once();
+        S.memory.lastError = undefined;
+        return result;
+      } catch (again) {
+        message = errorText(again);
+      }
+    }
+    S.memory.downUntil = Date.now() + MEMORY_RETRY_MS;
+    S.memory.lastError = clip(message, 200);
+    throw new Error(S.memory.lastError);
+  }
+}
+
+type Recalled = { block?: { text: string; facts: number }; ms: number; error?: string };
+
+/** What the memory has on a task, as the block a prompt gets (none when nothing relevant is stored). */
+async function recallNotes($: EngineInterface, task: string): Promise<Recalled> {
+  const started = Date.now();
+  try {
+    const notes = parseRecall(await callMemory($, 'recall', { task, detail: 'brief', scope: 'both' }));
+    const m = S.cfg.memory;
+    const block = memoryBlock(notes, { maxChars: m.maxChars, maxFacts: m.maxFacts, withIds: m.modelTools });
+    return { block, ms: Date.now() - started, ...(notes.errors.length > 0 && !block ? { error: clip(notes.errors.join('; '), 200) } : {}) };
+  } catch (error) {
+    return { ms: Date.now() - started, error: errorText(error) };
+  }
+}
+
+function memoryEntry(recalled: Recalled, purpose: 'prompt' | 'subagent'): NonNullable<LedgerEntry['memory']> {
+  return {
+    action: 'recall',
+    for: purpose,
+    ok: recalled.error === undefined,
+    facts: recalled.block?.facts ?? 0,
+    chars: recalled.block?.text.length ?? 0,
+    ms: recalled.ms,
+    ...(recalled.error ? { error: recalled.error } : {}),
+  };
+}
+
+/**
+ * The first prompt of a conversation with a real task gets the memory's notes on it as context
+ * (once per conversation, within its first turns). Shadow mode asks and logs, adds nothing.
+ */
+async function withRecall<E extends { text: string; context?: readonly string[] }>($: EngineInterface, e: E): Promise<E> {
+  const m = S.cfg.memory;
+  if (!memoryOn() || !m.recallOnStart || S.memory.recalledFor === S.session || e.text.includes(BRIEF_MARKER)) return e;
+  const turns = await $.session.turns().catch(() => 0);
+  if (turns > 2) {
+    S.memory.recalledFor = S.session;
+    return e;
+  }
+  const task = recallTask(e.text);
+  if (!task) return e;
+  S.memory.recalledFor = S.session;
+  const recalled = await recallNotes($, task);
+  const add = recalled.block && !shadow();
+  await ledger($, { kind: 'memory', scope: 'main', applied: !shadow(), text: clip(task, 160), memory: memoryEntry(recalled, 'prompt') });
+  if (add && recalled.block!.facts > 0) {
+    $.ui.toast(L(`jev-governor: из памяти добавлено фактов: ${recalled.block!.facts}`, `jev-governor: ${recalled.block!.facts} fact(s) recalled from memory`), { timeoutMs: 5000 });
+  }
+  return add ? { ...e, context: [...(e.context ?? []), recalled.block!.text] } : e;
+}
+
+/** A subagent's task with the memory's notes on it appended (non-fork, long enough prompt). */
+async function subagentRecall($: EngineInterface, prompt: string, description: string): Promise<Recalled | undefined> {
+  const m = S.cfg.memory;
+  if (!memoryOn() || !m.recallForSubagents || prompt.length < m.subagentMinChars) return undefined;
+  const task = recallTask(`${description}. ${prompt}`);
+  return task ? recallNotes($, task) : undefined;
+}
+
+/** Saves a handoff brief as a session summary, in the background (the memory extracts its facts). */
+function saveHandoff($: EngineInterface, brief: string | undefined, title: string): void {
+  if (!memoryOn() || !S.cfg.memory.saveOnHandoff || !brief) return;
+  const summary = sessionSummary(brief, title);
+  if (!summary) return;
+  const started = Date.now();
+  void callMemory($, 'save_session', { summary, scope: 'project' })
+    .then(() => ledger($, { kind: 'memory', text: clip(title, 160), memory: { action: 'save', for: 'handoff', ok: true, chars: summary.length, ms: Date.now() - started } }))
+    .catch((error: unknown) =>
+      ledger($, { kind: 'memory', text: clip(title, 160), memory: { action: 'save', for: 'handoff', ok: false, chars: summary.length, ms: Date.now() - started, error: clip(errorText(error), 200) } }),
+    );
+}
+
+/** `/jevg memory [on|off|start]`: the option, and whether the server answers. */
+async function memoryCommand($: EngineInterface, arg: string): Promise<string> {
+  await loadConfig($, true);
+  if (arg === 'on' || arg === 'off') {
+    S.cfg = { ...S.cfg, memory: { ...S.cfg.memory, enabled: arg === 'on' } };
+    await saveConfig($);
+    S.memory.downUntil = 0;
+    await ledger($, { kind: 'chat', text: `/jevg memory ${arg}` });
+  }
+  if (arg === 'start') {
+    S.memory.downUntil = 0;
+    await startMemoryServer($);
+  }
+  const m = S.cfg.memory;
+  const head = L(
+    `Память (${m.server}): ${m.enabled ? 'включена' : 'выключена'}; recall в начале чата ${m.recallOnStart ? 'да' : 'нет'}, для субагентов ${m.recallForSubagents ? 'да' : 'нет'}; бриф переноса сохраняется ${m.saveOnHandoff ? 'да' : 'нет'}; инструменты модели ${m.modelTools ? 'да' : 'нет'}.`,
+    `Memory (${m.server}): ${m.enabled ? 'on' : 'off'}; recall at chat start ${m.recallOnStart ? 'yes' : 'no'}, for subagents ${m.recallForSubagents ? 'yes' : 'no'}; handoff brief saved ${m.saveOnHandoff ? 'yes' : 'no'}; model tools ${m.modelTools ? 'yes' : 'no'}.`,
+  );
+  if (!m.enabled && arg !== 'start') return `${head}\n${L('Включить: /jevg memory on', 'Turn on: /jevg memory on')}`;
+  S.memory.downUntil = 0;
+  try {
+    const status = memoryText(await callMemory($, 'memory_status', {}));
+    return `${head}\n${status.trim()}`;
+  } catch (error) {
+    return `${head}\n${L('Сервер памяти не отвечает', 'The memory server does not answer')}: ${errorText(error)}\n${L(
+      'Запуск: /jevg memory start; MCP подключается командой claude mcp add mnema-memory --scope user -- <путь к mnema-mcp>.',
+      'Start it: /jevg memory start; the MCP is added with claude mcp add mnema-memory --scope user -- <path to mnema-mcp>.',
+    )}`;
   }
 }
 
@@ -2009,6 +2179,7 @@ export const register: Register = (on) => {
       return { text: `jev-governor ${arg === 'on' ? 'enabled' : 'disabled'}.` };
     }
     if (sub === 'chat' || sub === 'idle') return { text: await chatCommand($, sub, raw.slice(sub.length).trim().toLowerCase()) };
+    if (sub === 'memory') return { text: await memoryCommand($, raw.slice(sub.length).trim().toLowerCase()) };
     if (arg === 'ui') return { text: await startUi($) };
     if (arg === 'reload') {
       await loadConfig($, true);
@@ -2069,9 +2240,9 @@ export const register: Register = (on) => {
       if (sub.baseEffort === undefined && typeof e.effort === 'string') sub.baseEffort = e.effort;
       const steps = S.cfg.router.escalateAfterErrors > 0 ? Math.floor(sub.errors / S.cfg.router.escalateAfterErrors) : 0;
       if (sub.light) {
-        // The light model has no effort to send. Its window is smaller and it reasons less: a growing
-        // task or failing tools move it to the standard model (one cache rewrite, once).
-        if (sub.steps <= S.cfg.router.lightMaxSteps && steps === 0) return yield* counted(e);
+        // Haiku 5.5 takes the chosen effort (Haiku 4.5 took none). It reasons less: a task that grows
+        // past searching or failing tools move it to the standard model (one cache rewrite, once).
+        if (sub.steps <= S.cfg.router.lightMaxSteps && steps === 0) return yield* counted(takesEffort(e.model ?? S.cfg.models.light) ? { ...e, effort: sub.effort } : e);
         sub.light = false;
         sub.tier = 'standard';
         sub.model = S.cfg.models.standard;
@@ -2182,6 +2353,16 @@ export const register: Register = (on) => {
         });
       }
     }
+    if (isMemoryTool(tool, S.cfg.memory.server) && memoryOn()) {
+      const name = tool.slice(tool.lastIndexOf('__') + 2);
+      await ledger($, {
+        kind: 'memory',
+        scope: e.agentId ? 'subagent' : 'main',
+        agentId: e.agentId,
+        text: name,
+        memory: { action: /^(save|correct|update|forget|close)/.test(name) ? 'save' : 'recall', for: 'model', ok: true },
+      });
+    }
     if (e.tool_use_id) {
       const command = e.tool === 'Bash' && typeof e.command === 'string' ? e.command : undefined;
       S.calls.set(e.tool_use_id, { tool: e.tool, command, agentId: e.agentId });
@@ -2237,14 +2418,29 @@ export const register: Register = (on) => {
 
   on('agent.spawn', async ($, e, next) => {
     await ensureInit($);
-    if (!active() || !jevKey() || e.fork || (!S.cfg.router.subagents && !S.cfg.agents.enabled)) return next(e);
+    // The memory's notes on the task, asked while the plan is made and appended to the prompt
+    // (the task stays first: a spawn is matched to its subagent by the prompt's start).
+    const recalling = e.fork ? Promise.resolve(undefined) : subagentRecall($, e.prompt, e.description);
+    const withNotes = async (): Promise<{ notes: string; memory?: NonNullable<LedgerEntry['memory']> }> => {
+      const recalled = await recalling;
+      return { notes: recalled?.block && !shadow() ? `\n\n${recalled.block.text}` : '', memory: recalled ? memoryEntry(recalled, 'subagent') : undefined };
+    };
+    // No plan: the notes still go, logged on their own.
+    const plain = async (): Promise<Awaited<ReturnType<typeof next>>> => {
+      const { notes, memory } = await withNotes();
+      const result = await next(notes ? { ...e, prompt: `${e.prompt}${notes}` } : e);
+      if (memory) await ledger($, { kind: 'memory', scope: 'subagent', agentId: result.agentId, applied: !shadow(), text: clip(e.description, 160), memory });
+      return result;
+    };
+    if (!active() || !jevKey() || e.fork || (!S.cfg.router.subagents && !S.cfg.agents.enabled)) return plain();
     let plan: SpawnPlan | undefined;
     try {
       plan = await planSpawn($, e);
     } catch (error) {
       await ledger($, { kind: 'error', error: `spawn plan: ${errorText(error)}` });
     }
-    if (!plan) return next(e);
+    if (!plan) return plain();
+    const { notes, memory } = await withNotes();
     if (shadow()) {
       const result = await next(e);
       await ledger($, {
@@ -2262,6 +2458,7 @@ export const register: Register = (on) => {
         pressure: plan.pressure,
         reasons: [...(plan.decision?.reasons ?? []), `ran as ${result.model ?? e.parentModel}`],
         ...(plan.decision?.light ? { light: true, lightApplied: false } : {}),
+        ...(memory ? { memory } : {}),
         jevMs: plan.jevMs,
         jevCost: plan.jevCost,
         applied: false,
@@ -2286,7 +2483,7 @@ export const register: Register = (on) => {
     const model = plan.model ? { model: plan.model } : {};
     let result;
     try {
-      result = await next({ ...e, prompt: plan.prompt, ...model });
+      result = await next({ ...e, prompt: `${plan.prompt}${notes}`, ...model });
     } finally {
       if (pending) S.pending = S.pending.filter((p) => p !== pending);
     }
@@ -2315,6 +2512,7 @@ export const register: Register = (on) => {
       jevMs: plan.jevMs,
       jevCost: plan.jevCost,
       ...(plan.decision?.light ? { light: true, lightApplied: sub?.light === true } : {}),
+      ...(memory ? { memory } : {}),
       applied: true,
       rate: plan.rate,
       baseModel: e.model ?? e.parentModel,
@@ -2372,6 +2570,17 @@ export const register: Register = (on) => {
             output: part.usage.output_tokens,
             cacheRead: part.usage.cache_read_input_tokens,
             cacheWrite: part.usage.cache_creation_input_tokens,
+            ...(part.long
+              ? {
+                  long: {
+                    input: part.long.input_tokens,
+                    output: part.long.output_tokens,
+                    cacheRead: part.long.cache_read_input_tokens,
+                    cacheWrite: part.long.cache_creation_input_tokens,
+                    steps: part.long.steps,
+                  },
+                }
+              : {}),
           },
         });
       }
@@ -2448,14 +2657,18 @@ export const register: Register = (on) => {
           '.',
       };
     }
-    if (!S.cfg.enabled || !S.cfg.handoff.enabled || !S.data || e.text.includes(BRIEF_MARKER)) return next(e);
+    // The memory's notes go with the first real task of a conversation, typed by the person.
+    const recall = async (x: typeof e) => (typed ? withRecall($, x) : x);
+    if (!S.cfg.enabled || !S.cfg.handoff.enabled || !S.data || e.text.includes(BRIEF_MARKER)) return next(await recall(e));
     const ref = CTX_REF.exec(e.text)?.[1];
     const id = ref ?? S.attachNext;
-    if (!id) return next(e);
+    if (!id) return next(await recall(e));
     const capsule = await readCapsule($, id);
     // A capsule is for another chat: a reference to it in its own chat is just text.
-    if (!capsule || capsule.meta.session === S.session) return next(e);
+    if (!capsule || capsule.meta.session === S.session) return next(await recall(e));
     S.attachNext = undefined;
+    // The capsule carries the previous chat's context: no recall on top of it.
+    S.memory.recalledFor = S.session;
     const result = await next({
       ...e,
       text: ref ? attachedPrompt(e.text) : e.text,
@@ -2489,6 +2702,18 @@ export const register: Register = (on) => {
   on('tool.check', async ($, e, next) => {
     await ensureInit($);
     const tool: string = e.tool;
+    if (isMemoryTool(tool, S.cfg.memory.server)) {
+      if (memoryOn() && S.cfg.memory.modelTools) return { decision: 'allow' };
+      if (S.cfg.enabled) {
+        await ledger($, { kind: 'memory', text: tool, memory: { action: 'refuse', for: 'model', ok: false } });
+        return {
+          decision: 'deny',
+          reason: S.cfg.memory.enabled
+            ? 'Long-term memory tools are switched off in jev-governor (memory.modelTools). Continue without them.'
+            : 'Long-term memory is switched off in jev-governor (/jevg memory on turns it on). Continue without it.',
+        };
+      }
+    }
     if (tool !== 'Read' && tool !== 'Grep') return next(e);
     const input = e as unknown as { file_path?: unknown; path?: unknown };
     if (await isSavedOutput($, input.file_path ?? input.path)) return { decision: 'allow' };

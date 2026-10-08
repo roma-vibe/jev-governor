@@ -50,13 +50,14 @@ export type GovernorConfig = {
     /** P(strong) for a subagent to run on the strong tier. */
     subagentStrongAt: number;
     /**
-     * Read-only subagents with an easy task on the light model (Haiku): its cache reads cost half of
-     * Sonnet's and Opus's. `shadow` only records what it would have chosen.
+     * Read-only subagents with an easy task on the light model (Haiku 5.5): $0.10/$0.50 per MTok and
+     * cache reads at $0.01 under a 100K-token prompt (5× that above), against Sonnet 5.5's $2/$10 and
+     * $0.20. `shadow` only records what it would have chosen.
      */
     lightSubagents: 'off' | 'shadow' | 'on';
     /** A subagent goes light only when P(strong) is below this. */
     lightBelow: number;
-    /** A light subagent moves to the standard tier after this many steps (its window is smaller) or after failed tool calls. */
+    /** A light subagent moves to the standard tier after this many steps (a task that grew past searching) or after failed tool calls. */
     lightMaxSteps: number;
     /** Context below this many tokens makes a model switch cheap (for upgrades; downgrades weigh dollars). */
     cheapSwitchTokens: number;
@@ -222,6 +223,36 @@ export type GovernorConfig = {
     /** List git worktrees (…/.claude/worktrees/…) as projects too. */
     showWorktrees: boolean;
   };
+  /**
+   * Long-term memory through an MCP memory server (Mnema): what earlier sessions decided and learned,
+   * recalled into a new conversation and into subagents so they do not rediscover it by reading.
+   */
+  memory: {
+    /** The whole option; off, the mod neither recalls nor saves, and refuses the server's tools (`modelTools`). */
+    enabled: boolean;
+    /** The MCP server's name as /mcp lists it (`claude mcp add <name> ...`). */
+    server: string;
+    /** Start the local memory server (`startCommand`) when it does not answer; tried at most once in 10 minutes. */
+    autoStart: boolean;
+    /** Command that starts the local server; empty: the mod's scripts/mnema-local.sh start. */
+    startCommand: string;
+    /** The first prompt of a conversation gets the notes relevant to it, as context. */
+    recallOnStart: boolean;
+    /** A subagent's task gets the notes relevant to it, prepended to its prompt. */
+    recallForSubagents: boolean;
+    /** A subagent prompt shorter than this gets no recall (a one-line errand needs none). */
+    subagentMinChars: number;
+    /** The brief of `/jevg getctx` / `/jevg fresh` is saved as a session summary. */
+    saveOnHandoff: boolean;
+    /** The model may call the memory's tools itself (save_fact, recall, ...); off, those calls are refused. */
+    modelTools: boolean;
+    /** Most characters of notes added to one prompt. */
+    maxChars: number;
+    /** Most facts added to one prompt. */
+    maxFacts: number;
+    /** A recall that takes longer is dropped and the prompt goes without it. */
+    timeoutMs: number;
+  };
   ui: {
     port: number;
     /** Language of the settings page (the page itself is translated in ui/src/i18n). */
@@ -309,6 +340,7 @@ export type LedgerKind =
   | 'light-up'
   | 'chat'
   | 'window'
+  | 'memory'
   | 'error';
 
 /** One line of ledger/<YYYY-MM-DD>/<session>.jsonl. */
@@ -343,7 +375,15 @@ export type LedgerEntry = {
   agent?: string;
   subagentType?: string;
   created?: boolean;
-  usage?: { model: string; input: number; output: number; cacheRead: number; cacheWrite: number };
+  usage?: {
+    model: string;
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    /** The part of the above from requests whose prompt was over 100K tokens (Haiku 5.5's long rate card); absent when none was. */
+    long?: { input: number; output: number; cacheRead: number; cacheWrite: number; steps: number };
+  };
   /** `usage`: summed from the turn's steps (0.3.4 on), or the turn's own figure, which starts over at a compaction inside the turn. */
   usageFrom?: 'steps' | 'turn';
   /** `output-read`: whose saved text was read (archiveOf). */
@@ -390,6 +430,21 @@ export type LedgerEntry = {
    * `handoff`: a capsule made (`create`), attached in a new chat (`attach`), this chat cleared
    * for it (`/jevg fresh`), or a `/jevg fresh` stopped before the clear (`cancel`, `tokens` 0).
    */
+  /**
+   * `memory`: a call to the memory server (`for`: the first prompt, a handoff, the model's own
+   * call refused, the server started). On a `subagent` entry: the recall its prompt got.
+   */
+  memory?: {
+    action: 'recall' | 'save' | 'start' | 'refuse';
+    for?: 'prompt' | 'subagent' | 'handoff' | 'model';
+    ok: boolean;
+    /** Facts added to the prompt (recall). */
+    facts?: number;
+    /** Characters added to the prompt (recall) or sent (save). */
+    chars?: number;
+    ms?: number;
+    error?: string;
+  };
   handoff?: {
     action: 'create' | 'attach' | 'clear' | 'cancel';
     id: string;

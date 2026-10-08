@@ -46,6 +46,15 @@ const timers: (() => void)[] = [];
 const store = new Map<string, unknown>();
 const submitted: { text: string; asUser?: boolean }[] = [];
 const commandsRun: string[] = [];
+/** Calls to the memory MCP server, and how it answers. */
+const mcpCalls: { server: string; tool: string; args?: Record<string, unknown> }[] = [];
+let mcpReply: (tool: string, args?: Record<string, unknown>) => Promise<{ content: { type: string; text: string }[]; isError: boolean; structuredContent?: unknown }> = async () => ({
+  content: [{ type: 'text', text: 'Cannot reach the memory service at http://127.0.0.1:8787: connection refused' }],
+  isError: true,
+});
+const processRuns: string[][] = [];
+/** The turns the session reports. */
+let sessionTurns = 0;
 /** Every request body sent to Jev. */
 const bodies: string[] = [];
 const statuses: string[] = [];
@@ -118,8 +127,15 @@ const $ = {
       return [...names].map((name) => ({ name, kind: files.has(`${dir}/${name}`) ? 'file' : 'dir', size: 1, mtimeMs: 1 }));
     },
   },
+  mcp: {
+    call: async (server: string, tool: string, args?: Record<string, unknown>) => {
+      mcpCalls.push({ server, tool, args });
+      return mcpReply(tool, args);
+    },
+  },
   process: {
     run: async (argv: string[], init?: { stdin?: string }) => {
+      processRuns.push(argv);
       if (argv[0] === 'pbcopy') clipboard = init?.stdin ?? '';
       return { exitCode: 0, stdout: '', stderr: '' };
     },
@@ -156,6 +172,7 @@ const $ = {
     root: async () => '/work/app',
     model: async () => sessionModel,
     messages: async () => messages,
+    turns: async () => sessionTurns,
     usage: async (args?: { breakdown?: string }) => ({
       context: {
         tokens: contextTokens,
@@ -848,7 +865,7 @@ describe('jev-governor hooks against a fake engine', () => {
       [...files.entries()].filter(([p]) => p.endsWith(`${id}.jsonl`)).flatMap(([, t]) => t.split('\n').filter(Boolean).map((l) => JSON.parse(l)));
     const step = async (agentId: string): Promise<{ model: string; effort: unknown }> => {
       let seen = { model: '', effort: undefined as unknown };
-      const it = handlers.get('turn.step')![0]!($, { turnId: 't-light', agentId, model: 'claude-haiku-4-5-20251001', effort: 'xhigh' }, async function* (x: any) {
+      const it = handlers.get('turn.step')![0]!($, { turnId: 't-light', agentId, model: 'claude-haiku-5-5', effort: 'xhigh' }, async function* (x: any) {
         seen = { model: x.model, effort: x.effort };
         yield x;
       });
@@ -867,16 +884,16 @@ describe('jev-governor hooks against a fake engine', () => {
           return { agentId: 'light-1', model: x.model ?? x.parentModel };
         },
       );
-      expect(spawned.model).toBe('claude-haiku-4-5-20251001');
-      // The light model has no effort: the engine's own is left alone, then the task grows.
-      expect((await step('light-1')).effort).toBe('xhigh');
+      expect(spawned.model).toBe('claude-haiku-5-5');
+      // Haiku 5.5 takes the chosen effort instead of the engine's, then the task grows.
+      expect((await step('light-1')).effort).not.toBe('xhigh');
       await step('light-1');
       await step('light-1');
       const up = await step('light-1');
       expect(up.model).toBe('claude-sonnet-5-5');
       expect(up.effort).not.toBe('xhigh');
       const entries = ledgerOf('light-session');
-      expect(entries.find((e) => e.kind === 'subagent')).toMatchObject({ light: true, lightApplied: true, model: 'claude-haiku-4-5-20251001' });
+      expect(entries.find((e) => e.kind === 'subagent')).toMatchObject({ light: true, lightApplied: true, model: 'claude-haiku-5-5' });
       expect(entries.find((e) => e.kind === 'light-up')?.reasons.join(' ')).toContain('moved to the standard model');
       expect((await step('light-1')).model).toBe('claude-sonnet-5-5');
 
@@ -1072,7 +1089,140 @@ describe('jev-governor hooks against a fake engine', () => {
     const entries = [...files.entries()].filter(([p]) => p.endsWith('usage-session.jsonl')).flatMap(([, t]) => t.split('\n').filter(Boolean).map((l) => JSON.parse(l)));
     const usage = entries.filter((e) => e.kind === 'usage');
     expect(usage).toHaveLength(1);
-    expect(usage[0].usage).toEqual({ model: 'claude-opus-5-5', input: 6, output: 300, cacheRead: 520_000, cacheWrite: 3_000 });
+    expect(usage[0].usage).toEqual({
+      model: 'claude-opus-5-5',
+      input: 6,
+      output: 300,
+      cacheRead: 520_000,
+      cacheWrite: 3_000,
+      // The two steps over a 100K-token prompt, for Haiku 5.5's long rate card.
+      long: { input: 4, output: 200, cacheRead: 440_000, cacheWrite: 2_000, steps: 2 },
+    });
     expect(usage[0].usageFrom).toBe('steps');
+  });
+  describe('long-term memory (memory.*)', () => {
+    const FACTS = {
+      content: [{ type: 'text', text: 'rendered' }],
+      isError: false,
+      structuredContent: {
+        memories: [
+          { scope: 'project', facts: [{ id: 'f1', text: 'Payments retry through the queue in src/pay/retry.ts', type: 'decision', status: 'active' }], open_questions: [], error: null },
+          { scope: 'personal', facts: [], open_questions: [], error: null },
+        ],
+      },
+    };
+    const setMemory = async (memory: Record<string, unknown>): Promise<void> => {
+      const config = JSON.parse(files.get(`${DATA}/config.json`) ?? '{}');
+      config.memory = { ...config.memory, ...memory };
+      files.set(`${DATA}/config.json`, JSON.stringify(config));
+      await emit('command.run', { command: 'jevg', args: 'reload' }, async () => ({ text: '' }));
+    };
+    const ledgerOf = (id: string): Record<string, any>[] =>
+      [...files.entries()].filter(([p]) => p.endsWith(`${id}.jsonl`)).flatMap(([, t]) => t.split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+
+    it('off: no recall, and the model is refused the memory tools', async () => {
+      await setMemory({ enabled: false });
+      await startSession('mem-off');
+      mcpCalls.length = 0;
+      const result = await emit('prompt.submit', { text: 'почини падающий тест в модуле оплаты' });
+      expect(result.context).toBeUndefined();
+      expect(mcpCalls).toHaveLength(0);
+      const check = await emit('tool.check', { tool: 'mcp__mnema-memory__save_fact', input: {} }, async () => ({ decision: 'ask' }));
+      expect(check.decision).toBe('deny');
+      expect(check.reason).toContain('/jevg memory on');
+      // Other MCP tools are not the mod's business.
+      expect((await emit('tool.check', { tool: 'mcp__other__x', input: {} }, async () => ({ decision: 'ask' }))).decision).toBe('ask');
+    });
+
+    it('on: the first real task of a chat gets the notes as context, once; the tools are allowed', async () => {
+      await setMemory({ enabled: true });
+      mcpReply = async () => FACTS;
+      await startSession('mem-on');
+      sessionTurns = 0;
+      mcpCalls.length = 0;
+      // A reply too short to be a task asks nothing.
+      expect((await emit('prompt.submit', { text: 'да' })).context).toBeUndefined();
+      expect(mcpCalls).toHaveLength(0);
+      const result = await emit('prompt.submit', { text: 'почини падающий тест в модуле оплаты' });
+      expect(mcpCalls).toHaveLength(1);
+      expect(mcpCalls[0]).toMatchObject({ server: 'mnema-memory', tool: 'recall', args: { detail: 'brief', scope: 'both' } });
+      expect(result.context).toHaveLength(1);
+      expect(result.context[0]).toContain('src/pay/retry.ts');
+      expect(result.context[0]).toContain('<memory source="earlier sessions">');
+      expect(result.text).toBe('почини падающий тест в модуле оплаты');
+      // Once per conversation.
+      expect((await emit('prompt.submit', { text: 'теперь добавь тест на повтор платежа' })).context).toBeUndefined();
+      expect(mcpCalls).toHaveLength(1);
+      expect(ledgerOf('mem-on').find((e) => e.kind === 'memory')).toMatchObject({ applied: true, memory: { action: 'recall', for: 'prompt', ok: true, facts: 1 } });
+      expect((await emit('tool.check', { tool: 'mcp__mnema-memory__save_fact', input: {} }, async () => ({ decision: 'ask' }))).decision).toBe('allow');
+    });
+
+    it('a stopped server is started once and asked again; then the memory is left alone for a while', async () => {
+      await startSession('mem-down');
+      sessionTurns = 0;
+      let up = false;
+      mcpReply = async () =>
+        up ? FACTS : { content: [{ type: 'text', text: 'Cannot reach the memory service at http://127.0.0.1:8787: connection refused' }], isError: true };
+      processRuns.length = 0;
+      const realRun = $.process.run;
+      $.process.run = async (argv: string[], init?: { stdin?: string }) => {
+        if (argv.join(' ').includes('mnema-local.sh')) up = true;
+        return realRun(argv, init);
+      };
+      try {
+        const result = await emit('prompt.submit', { text: 'почини падающий тест в модуле оплаты' });
+        expect(processRuns.some((a) => a.join(' ').includes('/plugin/scripts/mnema-local.sh start'))).toBe(true);
+        expect(result.context?.[0]).toContain('src/pay/retry.ts');
+        expect(ledgerOf('mem-down').find((e) => e.memory?.action === 'start')).toMatchObject({ memory: { ok: true } });
+      } finally {
+        $.process.run = realRun;
+      }
+      // Down again, and not restarted within 10 minutes: one failed call, then quiet for a minute.
+      up = false;
+      $.process.run = async (argv: string[], init?: { stdin?: string }) => realRun(argv, init);
+      await startSession('mem-down-2');
+      mcpCalls.length = 0;
+      processRuns.length = 0;
+      const failed = await emit('prompt.submit', { text: 'почини падающий тест в модуле оплаты' });
+      expect(failed.context).toBeUndefined();
+      expect(processRuns.some((a) => a.join(' ').includes('mnema-local.sh'))).toBe(false);
+      await startSession('mem-down-3');
+      await emit('prompt.submit', { text: 'почини падающий тест в модуле оплаты' });
+      expect(mcpCalls).toHaveLength(1);
+      expect(ledgerOf('mem-down-2').find((e) => e.kind === 'memory')?.memory).toMatchObject({ ok: false, facts: 0 });
+      $.process.run = realRun;
+    });
+
+    it('a subagent with a real task gets the notes appended to its prompt', async () => {
+      mcpReply = async () => FACTS;
+      await emit('command.run', { command: 'jevg', args: 'memory on' }, async () => ({ text: '' }));
+      await startSession('mem-sub');
+      mcpCalls.length = 0;
+      jevTier = 'standard';
+      jevEffortScore = 1;
+      let spawned: any;
+      const prompt = `Find where payment retries are scheduled and how the backoff is chosen. ${'Look through the services and the queue workers. '.repeat(5)}`;
+      await emit('agent.spawn', { subagentType: 'Explore', description: 'Find payment retries', prompt, parentModel: 'claude-opus-5-5' }, async (x: any) => {
+        spawned = x;
+        return { agentId: 'mem-sub-1', model: x.model ?? x.parentModel };
+      });
+      expect(mcpCalls.some((c) => c.tool === 'recall')).toBe(true);
+      expect(spawned.prompt.startsWith(prompt.trim().slice(0, 40)) || spawned.prompt.includes(prompt.trim().slice(0, 40))).toBe(true);
+      expect(spawned.prompt).toContain('src/pay/retry.ts');
+      // A short task asks nothing.
+      mcpCalls.length = 0;
+      await emit('agent.spawn', { subagentType: 'Explore', description: 'ls', prompt: 'List the files.', parentModel: 'claude-opus-5-5' }, async (x: any) => ({ agentId: 'mem-sub-2', model: x.model ?? x.parentModel }));
+      expect(mcpCalls.some((c) => c.tool === 'recall')).toBe(false);
+    });
+
+    it('/jevg memory reports the option and the server, and switches it', async () => {
+      mcpReply = async (tool) => ({ content: [{ type: 'text', text: tool === 'memory_status' ? 'plan pro: 3 of 100000 operations used' : '' }], isError: false });
+      const status = await emit('command.run', { command: 'jevg', args: 'memory' }, async () => ({ text: '' }));
+      expect(status.text).toContain('включена');
+      expect(status.text).toContain('3 of 100000');
+      const off = await emit('command.run', { command: 'jevg', args: 'memory off' }, async () => ({ text: '' }));
+      expect(off.text).toContain('выключена');
+      expect(JSON.parse(files.get(`${DATA}/config.json`)!).memory.enabled).toBe(false);
+    });
   });
 });

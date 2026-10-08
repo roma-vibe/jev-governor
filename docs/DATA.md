@@ -112,7 +112,7 @@ decides per task.
   (`model`, `prevModel`) or a change of the session's own effort (`effort`);
   `reasons` says which.
 - `subagent` also carries `light: true` when the task qualified for the light model
-  (read-only, P(strong) below `router.lightBelow`, effort medium or less) and
+  (read-only, not risky, P(strong) below `router.lightBelow`, effort `high` or less; before 0.3.5 `medium`) and
   `lightApplied` (whether it ran there: `router.lightSubagents` `on` or `shadow`).
 - `chat` — `/jevg chat on|off` or `/jevg idle on|off` in a chat (`text`, `reasons` give the state after).
   The switches themselves live in the engine store under `chat:<session>` (`off`, `idle`).
@@ -140,6 +140,13 @@ decides per task.
   first failure is logged as an `error` ending in `(retrying)`.
 - A `subagent` reason `wait note added`: the task got the `<cache-note>`
   (`agents.waitHint`) asking it to keep every wait under 4 minutes.
+- `memory` (0.3.5) — a call to the long-term memory server: `memory: { action, for, ok, facts?, chars?, ms?, error? }`.
+  `action`: `recall` / `save` / `start` (the mod started the local server) / `refuse` (a model's memory tool
+  refused while the memory is off). `for`: `prompt` (first task of a chat), `subagent`, `handoff` (the brief
+  saved), `model` (the model's own call; `text` is the tool). `facts` and `chars`: what was added to the prompt;
+  `applied: false` in shadow mode (asked, nothing added). A `subagent` entry may carry the same `memory` object.
+- `usage` also carries `long` (0.3.5): the part of the turn from steps with a prompt over 100K tokens
+  (`input`, `output`, `cacheRead`, `cacheWrite`, `steps`), priced on Haiku 5.5's long rate card.
 - `error` — `error` text (Jev timeouts, drafting failures …).
 
 ## Projects
@@ -180,9 +187,14 @@ into input, output, cache reads and cache writes.
 - `handoff.suggestColdAtTokens` (300k) — suggest `/jevg fresh` when the cache
   of a context this large went cold.
 - `projects.enabled` — the whole project panel.
-- `router.lightSubagents` (`shadow` | `on` | `off`, default `shadow`), `router.lightBelow` (0.15),
-  `router.lightMaxSteps` (30), `models.light` (Haiku 4.5) — read-only subagents with an
-  easy task on the light model: its cache reads cost half of Sonnet's and Opus's, and reading
-  is where subagents spend. No effort is sent to it. In `shadow` the mod only records what it
+- `router.lightSubagents` (`shadow` | `on` | `off`, default `on` since 0.3.5), `router.lightBelow` (0.25),
+  `router.lightMaxSteps` (80), `models.light` (`claude-haiku-5-5`; a config naming Haiku 4.5 is moved to it) —
+  read-only subagents with an easy task on the light model: Haiku 5.5 costs $0.10/$0.50 per MTok with cache
+  reads at $0.01 under a 100K-token prompt and $0.50/$2.50, $0.05 above (Sonnet 5.5: $2/$10, $0.20), and
+  reading is where subagents spend. It takes the chosen effort. In `shadow` the mod only records what it
   would have chosen (`light`, `lightApplied: false`); `node scripts/monitor.mjs` prints what those
   subagents would have cost on Haiku.
+- `memory` (0.3.5): `enabled` (false), `server` (`mnema-memory`, the MCP server's name), `autoStart` (true),
+  `startCommand` (empty: `scripts/mnema-local.sh start`), `recallOnStart` (true), `recallForSubagents` (true),
+  `subagentMinChars` (200), `saveOnHandoff` (true), `modelTools` (true), `maxChars` (2500), `maxFacts` (12),
+  `timeoutMs` (2500). See README, "Long-term memory".

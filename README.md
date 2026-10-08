@@ -9,7 +9,7 @@ Mods shipped in Claude Code 2.1.287. This one uses only that official mechanism:
 ## What it does
 
 - **Model and effort per turn.** Effort (`low`…`max`) is picked on every turn. Switching to Sonnet 5.5 is priced in dollars: rewriting the context into the other model's cache against what Sonnet saves on output over the next turns (cache reads cost the same on both). Short continuations ("yes", "go on") are decided locally, without asking Jev.
-- **Subagents.** Model and effort are chosen per task at spawn. Read-only subagents with an easy task can run on Haiku (half the cache-read price; off by default in "shadow" mode, which only records what it would choose) and move up to Sonnet when the task grows. Generic subagents get the role of a matching specialist; if none exists, one is created (short English prompt and skills, drafted by Sonnet 5.5).
+- **Subagents.** Model and effort are chosen per task at spawn. Read-only subagents with an easy task run on Haiku 5.5 (a twentieth of Sonnet's price under a 100K-token prompt, a quarter above) and move up to Sonnet when the task grows or tools keep failing. Generic subagents get the role of a matching specialist; if none exists, one is created (short English prompt and skills, drafted by Sonnet 5.5).
 - **Compaction without a summary.** Jev removes stale tool calls and results; the remaining text stays verbatim. It runs when the context reaches 200k (Jev can remove ≥40%), and whenever Claude Code compacts itself. Optionally (off by default, `compaction.onReturn`) also while you are away, once the cache has expired, so that the rewrite on your return is smaller. The mod also sets Claude Code's auto-compact window (`compaction.autoWindowTokens`, 250k) so the engine starts a compaction in the middle of a long turn and inside subagents; those go through Jev too.
 - **Old dialog folded.** At every compaction, earlier answers, agent reports, monitor events and long pastes older than the last two turns keep their first lines and a link to a file with the full text (`compaction.fold`). Jev keeps the ones the current work still relies on. On a long real chat this removed 35–67% of the dialog text per compaction.
 - **Nothing is lost.** Everything compaction removes is archived to files and the history keeps a pointer; Claude reads it back when it needs an old detail.
@@ -17,6 +17,7 @@ Mods shipped in Claude Code 2.1.287. This one uses only that official mechanism:
 - **Escalation on facts.** When tool calls fail close together (by default 2 of the last 6 results), the effort goes up for the rest of the turn; scattered failures over a long turn do not count.
 - **Limits-aware.** If the 5-hour or weekly window is burning faster than normal, thresholds shift toward saving.
 - **Short waits in subagents.** Each subagent task asks to wait for builds no longer than 4 minutes per call: its cache lives 5 minutes, and a longer pause rewrites its whole context.
+- **Long-term memory (optional, `memory.*`).** With a memory MCP server ([Mnema](#long-term-memory)) the mod recalls what earlier chats decided and learned, itself and without a model step, and adds a few hundred tokens of notes to the first task of a chat and to subagent tasks, so they find less by reading files. The handoff brief is saved there. `/jevg memory on|off`.
 - **Move to a new chat.** `/jevg getctx` builds a compact "capsule" of the chat (brief, work steps, changed files, latest checks); `/jevg fresh` does it in the same window: capsule, `/clear`, capsule attached to your next message.
 - **Settings UI.** Vue 3 + Tailwind 4: cost overview with exact and estimated savings, settings, agents, skills, journal, a projects board. English by default, Russian available.
 - **Shadow mode.** Decisions are only logged, nothing changes. Use it for an honest with/without comparison.
@@ -65,8 +66,35 @@ Mods run with your permissions and are not sandboxed: read the code before you e
 - `/jevg fresh [--brief|--nobrief] [focus]`: continue in this window with a clean chat
 - `/jevg getctx [--brief|--nobrief] [focus]`: a compact context of this chat for a new one (prompt copied to the clipboard)
 - `/jevg ctx [list|<id>]`: in a new chat, attach a project capsule to the next message
+- `/jevg memory [on|off|start]`: long-term memory: its state and the server's, switch it, start the local server
 
 The mod's own messages (chat notices, toasts, command replies) and the UI come in English and Russian. Setting `ui.language`: `auto` (default) follows the language set in Claude Code (`language` in `~/.claude/settings.json`), then the system language; `en` or `ru` forces one.
+
+## Long-term memory
+
+Optional, off by default. The mod talks to a memory MCP server (Mnema) through Claude Code's own connection:
+
+- **First task of a chat:** the mod runs `recall` on it and adds the notes as hidden context (a few hundred tokens; nothing when nothing relevant is stored). Not when a capsule is attached, which already carries the context.
+- **Subagents:** a subagent with a real task (`memory.subagentMinChars`) gets the notes appended to its prompt; the recall runs while the model is chosen.
+- **Handoff:** the brief of `/jevg getctx` / `/jevg fresh` is saved with `save_session`, in the background.
+- **The model's own calls:** allowed (`memory.modelTools`). The server asks the model to recall at the start of a task, which is a step over the whole context; the notes the mod adds say the task is already recalled. Off, the memory tools are refused.
+- **Failures cost one timeout:** `memory.timeoutMs` (2.5 s), then the memory is left alone for a minute. A server that does not answer is started (`scripts/mnema-local.sh start`, at most every 10 minutes).
+
+Set up locally (once):
+
+```bash
+scripts/mnema-local.sh start
+```
+
+```bash
+~/Documents/mnema-mcp/.venv/bin/mnema-mcp configure --api-key "$(scripts/mnema-local.sh key claude-code)" --base-url http://127.0.0.1:8787
+```
+
+```bash
+claude mcp add mnema-memory --scope user -- ~/Documents/mnema-mcp/.venv/bin/mnema-mcp
+```
+
+Then `/jevg memory on`. `mnema-mcp doctor` checks the chain; `node scripts/monitor.mjs` reports recalls, facts added, failures and the model's own memory calls (section 6). The local server runs with `MNEMA_LLM=mock` by default: saving and `search` work fully, `recall` matches by words in common with the task.
 
 ## UI
 

@@ -22,6 +22,7 @@ const kinds = computed<{ value: LedgerKind | ''; label: string }[]>(() => [
   { value: 'override', label: t('override: your /model and effort changes') },
   { value: 'chat', label: t('chat: /jevg chat and /jevg idle in a chat') },
   { value: 'light-up', label: t('light-up: a light subagent moved to the standard model') },
+  { value: 'memory', label: t('memory: long-term memory calls') },
   { value: 'rerun-after-prune', label: t('rerun-after-prune: rerun of what compaction removed') },
   { value: 'redacted', label: t('redacted: secrets removed from requests to Jev') },
   { value: 'window', label: t('window: auto-compaction window per session') },
@@ -243,6 +244,29 @@ function details(e: LedgerEntry): string {
       return [e.newTopic !== undefined ? t('P(new task) {value}', { value: fmtP(e.newTopic) }) : '', reasons(e)].filter(Boolean).join(' · ');
     case 'light-up':
       return reasons(e);
+    case 'memory':
+      return e.memory
+        ? [
+            e.memory.action === 'recall'
+              ? e.memory.for === 'model'
+                ? t('the model called {tool}', { tool: e.text ?? 'recall' })
+                : t('recall for {target}: {n} facts', { target: e.memory.for === 'subagent' ? t('a subagent') : t('the first task'), n: e.memory.facts ?? 0 })
+              : e.memory.action === 'save'
+                ? e.memory.for === 'model'
+                  ? t('the model called {tool}', { tool: e.text ?? 'save_fact' })
+                  : t('handoff brief saved')
+                : e.memory.action === 'start'
+                  ? t('memory server started')
+                  : t('memory tool refused: {tool}', { tool: e.text ?? '' }),
+            e.memory.ms !== undefined ? `${fmtNum(e.memory.ms)} ms` : '',
+            e.applied === false ? t('observation') : '',
+            e.memory.ok ? '' : t('failed'),
+            e.memory.error ?? '',
+            e.memory.for !== 'model' && e.text ? e.text : '',
+          ]
+            .filter(Boolean)
+            .join(' · ')
+        : '';
     case 'chat':
       return [e.text ?? '', reasons(e)].filter(Boolean).join(' · ');
     case 'rerun-after-prune':
@@ -282,6 +306,7 @@ const kindBadge: Record<string, string> = {
   redacted: 'badge-gray',
   chat: 'badge-indigo',
   'light-up': 'badge-amber',
+  memory: 'badge-green',
   'rerun-after-prune': 'badge-amber',
   override: 'badge-indigo',
   window: 'badge-gray',

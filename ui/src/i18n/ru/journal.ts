@@ -90,4 +90,12 @@ export default {
   'click a row to see the whole entry': 'нажмите на строку, чтобы увидеть запись целиком',
   'No entries.': 'Записей нет.',
   'observation': 'наблюдение',
+  "memory: long-term memory calls": "memory: обращения к долговременной памяти",
+  "the model called {tool}": "модель вызвала {tool}",
+  "recall for {target}: {n} facts": "recall для {target}: фактов {n}",
+  "a subagent": "субагента",
+  "the first task": "первой задачи",
+  "handoff brief saved": "бриф переноса сохранён",
+  "memory server started": "сервер памяти запущен",
+  "memory tool refused: {tool}": "инструмент памяти отклонён: {tool}",
 } as Record<string, string>;

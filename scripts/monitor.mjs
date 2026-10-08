@@ -13,7 +13,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { computeSavings, familyOf, PRICES, usageCost } from '../hooks/lib/savings.ts';
+import { computeSavings, familyOf, PRICES, priceAt, usageCost } from '../hooks/lib/savings.ts';
 import { resolveConfig } from '../hooks/lib/config.ts';
 import { pricable } from '../ui/lib/pricable.ts';
 
@@ -255,7 +255,7 @@ function stepsOf(lines, { sidechain }) {
 
 /** API-equivalent dollars of one request at list prices (`subagent`: cache writes at the 5-minute price unless the transcript says 1h). */
 function stepCost(step, subagent, family) {
-  const p = PRICES[family ?? familyOf(step.model ?? '') ?? 'opus'];
+  const p = priceAt(family ?? familyOf(step.model ?? '') ?? 'opus', (step.input ?? 0) + step.cacheRead + step.cacheWrite);
   const w1h = step.write1h ?? (subagent ? 0 : step.cacheWrite);
   const w5m = Math.max(0, step.cacheWrite - w1h);
   return (step.input * p.input + step.output * p.output + step.cacheRead * p.cacheRead + w1h * p.write1h + w5m * p.write5m) / 1e6;
@@ -267,7 +267,7 @@ function rebuildsOf(steps) {
   for (let i = 1; i < steps.length; i++) {
     const gap = Date.parse(steps[i].ts) - Date.parse(steps[i - 1].ts);
     if (gap > SUBAGENT_TTL_MS && steps[i].cacheWrite >= REBUILD_TOKENS) {
-      const p = PRICES[familyOf(steps[i].model ?? '') ?? 'opus'];
+      const p = priceAt(familyOf(steps[i].model ?? '') ?? 'opus', (steps[i].input ?? 0) + steps[i].cacheRead + steps[i].cacheWrite);
       out.push({ gap, tokens: steps[i].cacheWrite, cost: (steps[i].cacheWrite * p.write5m) / 1e6 });
     }
   }
@@ -332,7 +332,7 @@ async function loadTranscripts() {
 /**
  * Subagents that qualified for the light model (`light` on the `subagent` entry): how many ran on it
  * (`lightApplied`), how many moved up (`light-up`), and what the qualifying ones would cost on Haiku
- * against what they cost, by their transcripts.
+ * (5.5, both rate cards) against what they cost, by their transcripts.
  */
 function lightLine(subagents, movedUp, subRuns, mode) {
   const light = subagents.filter((e) => e.light);
@@ -346,7 +346,7 @@ function lightLine(subagents, movedUp, subRuns, mode) {
   const maxCtx = steps.length ? Math.max(...steps) : 0;
   return [
     `Лёгкая модель для субагентов (${mode}): подходящих ${light.length}, запущено на ней ${applied}, переведено выше ${movedUp.length}.`,
-    runs.length ? ` Их стоимость по транскриптам $${actual.toFixed(2)}, на Haiku было бы ≈ $${onHaiku.toFixed(2)}${applied ? '' : ' (оценка по тем же токенам)'}; самый большой контекст ${k(maxCtx)}${maxCtx > 180_000 ? ' — выше окна Haiku, такие задачи ей не подходят' : ''}.` : '',
+    runs.length ? ` Их стоимость по транскриптам $${actual.toFixed(2)}, на Haiku 5.5 было бы ≈ $${onHaiku.toFixed(2)}${applied ? '' : ' (оценка по тем же токенам)'}; самый большой контекст ${k(maxCtx)}${maxCtx > 100_000 ? ' (шаги выше 100K у Haiku 5.5 идут по тарифу в 5 раз дороже)' : ''}.` : '',
   ].join('');
 }
 
@@ -362,6 +362,29 @@ function windowLine(windows, compacts) {
     user ? `, задано вами в окружении ${user}` : '',
     `; сжатий в субагентах ${subs.length} (через Jev ${subOk}, пересказом ${subs.length - subOk}).`,
   ].join('');
+}
+
+/** Long-term memory (memory.*): the mod's recalls, what they added, failures, the model's own calls. */
+function memoryLines(mem) {
+  if (mem.length === 0) return ['Память: записей нет (memory.enabled выключен или сервер не вызывался).'];
+  const recalls = mem.filter((e) => e.memory?.action === 'recall' && e.memory.for !== 'model');
+  const ok = recalls.filter((e) => e.memory.ok);
+  const withFacts = ok.filter((e) => (e.memory.facts ?? 0) > 0);
+  const ms = ok.map((e) => e.memory.ms ?? 0).sort((a, b) => a - b);
+  const median = ms.length ? ms[Math.floor(ms.length / 2)] : 0;
+  const chars = withFacts.reduce((a, e) => a + (e.memory.chars ?? 0), 0);
+  const failed = recalls.filter((e) => !e.memory.ok);
+  const model = mem.filter((e) => e.memory?.for === 'model' && e.memory.action !== 'refuse');
+  const modelRecalls = model.filter((e) => e.memory.action === 'recall' && /^recall$/.test(e.text ?? ''));
+  const saves = mem.filter((e) => e.memory?.action === 'save' && e.memory.for === 'handoff');
+  const starts = mem.filter((e) => e.memory?.action === 'start');
+  const refused = mem.filter((e) => e.memory?.action === 'refuse');
+  const errors = [...new Set(failed.map((e) => e.memory.error).filter(Boolean))].slice(0, 3);
+  return [
+    `Память: recall мода ${recalls.length} (в начале чата ${count(recalls, (e) => e.memory.for === 'prompt')}, для субагентов ${count(recalls, (e) => e.memory.for === 'subagent')}); с фактами ${withFacts.length}, фактов всего ${withFacts.reduce((a, e) => a + e.memory.facts, 0)}, ≈${Math.round(chars / 3.5)} ток. добавлено; медиана ${median} мс; ошибок ${failed.length}.`,
+    `Вызовы модели: ${model.length} (из них recall ${modelRecalls.length}${modelRecalls.length > 0 ? ' — шаг поверх всего контекста; мод уже делает recall сам' : ''}); отказано (память выключена): ${refused.length}; бриф переноса сохранён: ${count(saves, (e) => e.memory.ok)}/${saves.length}; запусков сервера: ${starts.length} (неудачных ${count(starts, (e) => !e.memory.ok)}).`,
+    ...errors.map((e) => `- ошибка: ${e}`),
+  ];
 }
 
 function section(title, lines) {
@@ -563,8 +586,20 @@ async function main() {
       `Капсул: ${created.length} (с брифом ${count(created, (e) => e.handoff.brief)}, через /jevg fresh ${count(created, (e) => e.handoff.fresh)}); подключений: ${count(handoffs, (e) => e.handoff?.action === 'attach')}; очисток чата: ${count(handoffs, (e) => e.handoff?.action === 'clear')}; /jevg fresh отменён: ${count(handoffs, (e) => e.handoff?.action === 'cancel')}.`,
       ...created.slice(-5).map((e) => `- ${e.handoff.id}: ${k(e.handoff.tokens)} вместо ${k(e.handoff.sourceTokens)}${(e.reasons ?? []).length ? ` · ${e.reasons.join('; ')}` : ''}`),
       `Подсказок: ${hints.length} (при остывшем кэше ${count(hints, (e) => (e.reasons ?? []).includes('cache cold'))}); за подсказкой в течение 30 минут последовала капсула: ${followed.length}.`,
+      ...memoryLines(by('memory')),
     ]),
   );
+  {
+    const mem = by('memory').filter((e) => e.memory?.action === 'recall' && e.memory.for !== 'model');
+    const failed = mem.filter((e) => !e.memory.ok).length;
+    if (mem.length >= 5 && failed / mem.length > 0.3) {
+      advice.push(`Память: ${failed} из ${mem.length} recall не удались — проверьте сервер (/jevg memory, scripts/mnema-local.sh status).`);
+    }
+    const modelRecalls = by('memory').filter((e) => e.memory?.for === 'model' && e.text === 'recall').length;
+    if (modelRecalls > mem.length && modelRecalls >= 5) {
+      advice.push(`Модель сама вызывает recall чаще мода (${modelRecalls} против ${mem.length}): каждый такой вызов — шаг поверх всего контекста; можно выключить memory.modelTools.`);
+    }
+  }
 
   // 7. Spend.
   const report = computeSavings(entries.filter(pricable), {

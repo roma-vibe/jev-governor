@@ -57,6 +57,8 @@ node scripts/monitor.mjs --days 1
    - Metrics: how many `getctx` there were, with or without a brief and why, whether the capsule attached, its size against the old chat's context, the new chat's context on the first steps.
 5. **New chat hint.**
    - Metrics: how many times shown, how many times `getctx` followed it, ones that look false (by request text).
+   - **Long-term memory** (in the same report section, `memory` records): the mod's recalls (first task / subagents), how many brought facts and how many tokens they added, median latency, failures, the model's own memory calls (a model `recall` is a step over the whole context: if they outnumber the mod's, turn off `memory.modelTools`), handoff briefs saved, server starts.
+   - **Light model** (section 4): subagents on Haiku 5.5, what they cost against Sonnet, `light-up` moves. Many moves up mean the light tasks are not light: lower `router.lightBelow`.
 6. **Spend.**
    - Metrics: limit pace 5h/7d, Jev spend per day, API equivalent against previous weeks.
 7. **Errors.**
@@ -73,6 +75,8 @@ Changes apply from the next turn, without restarting chats.
 - **Piece by piece** (Settings):
   - compaction: "Compact through Jev", "Save removed content to an archive";
   - handoff: "Context handoff to a new chat", the hint ("Suggest a new chat at context from" = 0 — turn off);
+  - long-term memory: Context → "Long-term memory" (or `/jevg memory on|off`);
+  - light model: Models & agents → "Light model for reading subagents";
   - "Trimming large outputs";
   - model, effort and subagent selection — in the "Main chat" and "Subagents" sections.
 - **Check what is enabled, in any chat:** `/jevg`.

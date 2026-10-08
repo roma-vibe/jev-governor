@@ -348,6 +348,11 @@ export type SubagentContext = {
   pinnedEffort?: Effort;
 };
 
+/** Whether a model accepts an effort level: all current ones; Haiku 4.5 and older Haiku do not. */
+export function takesEffort(model: string): boolean {
+  return !/haiku-[34]|3(-5)?-haiku/i.test(model);
+}
+
 /** Read-only search agents rarely need the strong tier. */
 const SEARCH_TYPES = new Set(['Explore']);
 
@@ -371,9 +376,10 @@ export function decideSubagent(
     const readOnly = ctx.readOnly ?? SEARCH_TYPES.has(ctx.subagentType);
     const risky = signals.risky >= r.riskyAt && ctx.pressure < 3 && !readOnly;
     tier = risky || signals.pStrong >= bar ? 'strong' : 'standard';
-    // Reading is where the cost is (cache reads of a growing context), and the light model reads at half
-    // the price; it is for tasks that need no reasoning, so read-only with a low chance of needing Opus.
-    if (tier === 'standard' && readOnly && !risky && r.lightSubagents !== 'off' && signals.pStrong < r.lightBelow && effortIndex(effort) <= effortIndex('medium')) {
+    // Reading is where the cost is (cache reads of a growing context), and the light model (Haiku 5.5)
+    // reads at a twentieth of Sonnet's price under a 100K prompt; it is for tasks that need little
+    // reasoning, so read-only, a low chance of needing Opus and no more than `high` effort.
+    if (tier === 'standard' && readOnly && signals.risky < r.riskyAt && r.lightSubagents !== 'off' && signals.pStrong < r.lightBelow && effortIndex(effort) <= effortIndex('high')) {
       light = true;
     }
     reasons.push(

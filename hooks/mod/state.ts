@@ -159,6 +159,11 @@ export const S = {
   jevFailures: 0,
   /** The conversation ended (`/clear`, a resume) and the process goes on under another session id. */
   sessionEnded: false,
+  /**
+   * The memory server (`memory.*`): the conversation whose first prompt was given a recall,
+   * until when calls are skipped after a failure, when the mod last tried to start the server.
+   */
+  memory: { recalledFor: undefined as string | undefined, downUntil: 0, startedAt: 0, lastError: undefined as string | undefined },
 };
 
 export type Handoff = {
@@ -230,11 +235,27 @@ export type ModelTokens = {
   cache_creation_input_tokens: number;
 };
 
-/** A turn's requests on one model, summed from its steps. */
-export type StepTotals = ModelTokens & { steps: number };
+/**
+ * A turn's requests on one model, summed from its steps; `long` the same for the steps whose
+ * prompt was over LONG_PROMPT_TOKENS (Haiku 5.5 bills those on its long rate card).
+ */
+export type StepTotals = ModelTokens & { steps: number; long?: ModelTokens & { steps: number } };
 
 /** What a turn cost on one model: one `usage` ledger entry. `steps` only when the turn ran on more than one. */
-export type UsagePart = { model: string; usage: ModelTokens; steps?: number; from: 'steps' | 'turn' };
+export type UsagePart = { model: string; usage: ModelTokens; long?: ModelTokens & { steps: number }; steps?: number; from: 'steps' | 'turn' };
+
+/** Prompt tokens above which a request is counted in `long` (savings.ts LONG_PROMPT_TOKENS). */
+const LONG_PROMPT = 100_000;
+
+const zero = (): ModelTokens & { steps: number } => ({ steps: 0, input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 });
+
+function addTokens(t: ModelTokens & { steps: number }, u: ModelTokens): void {
+  t.steps++;
+  t.input_tokens += u.input_tokens || 0;
+  t.output_tokens += u.output_tokens || 0;
+  t.cache_read_input_tokens += u.cache_read_input_tokens || 0;
+  t.cache_creation_input_tokens += u.cache_creation_input_tokens || 0;
+}
 
 /** The key a running turn's step usage is kept under: a subagent's run is its own turn. */
 export function stepKey(turnId: string, agentId: string | undefined): string {
@@ -251,12 +272,10 @@ export function addStepUsage(key: string, usage: (ModelTokens & { model: string 
     S.stepUsage.set(key, (byModel = new Map()));
     if (S.stepUsage.size > 200) S.stepUsage.delete(S.stepUsage.keys().next().value as string);
   }
-  const t = byModel.get(usage.model) ?? { steps: 0, input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
-  t.steps++;
-  t.input_tokens += usage.input_tokens || 0;
-  t.output_tokens += usage.output_tokens || 0;
-  t.cache_read_input_tokens += usage.cache_read_input_tokens || 0;
-  t.cache_creation_input_tokens += usage.cache_creation_input_tokens || 0;
+  const t: StepTotals = byModel.get(usage.model) ?? zero();
+  addTokens(t, usage);
+  const prompt = (usage.input_tokens || 0) + (usage.cache_read_input_tokens || 0) + (usage.cache_creation_input_tokens || 0);
+  if (prompt > LONG_PROMPT) addTokens((t.long ??= zero()), usage);
   byModel.set(usage.model, t);
 }
 
@@ -277,7 +296,7 @@ export function turnUsageParts(reported: (ModelTokens & { model: string }) | und
   }
   const last = reported?.model;
   parts.sort(([a], [b]) => (a === last ? 1 : 0) - (b === last ? 1 : 0));
-  return parts.map(([model, { steps, ...usage }]) => ({ model, usage, from: 'steps', ...(parts.length > 1 ? { steps } : {}) }));
+  return parts.map(([model, { steps, long, ...usage }]) => ({ model, usage, ...(long ? { long } : {}), from: 'steps', ...(parts.length > 1 ? { steps } : {}) }));
 }
 
 /**

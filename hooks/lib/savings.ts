@@ -28,16 +28,36 @@
 
 import { EFFORTS, type Effort, type LedgerEntry } from './types.ts';
 
-export type Family = 'fable' | 'opus' | 'sonnet' | 'haiku';
+/** `haiku` is Haiku 5.5 and later; `haiku4` the Haiku 4.x / 3.x models before it. */
+export type Family = 'fable' | 'opus' | 'sonnet' | 'haiku' | 'haiku4';
 export type Price = { input: number; output: number; cacheRead: number; write5m: number; write1h: number };
 
-/** $ per million tokens. */
+/** $ per million tokens; for a family in LONG_PRICES, the rate for prompts up to its threshold. */
 export const PRICES: Record<Family, Price> = {
   fable: { input: 10, output: 50, cacheRead: 0.25, write5m: 12.5, write1h: 20 },
   opus: { input: 4, output: 20, cacheRead: 0.2, write5m: 5, write1h: 8 },
   sonnet: { input: 2, output: 10, cacheRead: 0.2, write5m: 2.5, write1h: 4 },
-  haiku: { input: 1, output: 5, cacheRead: 0.1, write5m: 1.25, write1h: 2 },
+  haiku: { input: 0.1, output: 0.5, cacheRead: 0.01, write5m: 0.125, write1h: 0.2 },
+  haiku4: { input: 1, output: 5, cacheRead: 0.1, write5m: 1.25, write1h: 2 },
 };
+
+/**
+ * Families with a second rate card for long prompts: a request whose prompt (input + cache read +
+ * cache write) is above `above` tokens bills every token of it, output too, at `price`. Haiku 5.5
+ * has two cards, split at a 100K-token prompt.
+ */
+export const LONG_PRICES: Partial<Record<Family, { above: number; price: Price }>> = {
+  haiku: { above: 100_000, price: { input: 0.5, output: 2.5, cacheRead: 0.05, write5m: 0.625, write1h: 1 } },
+};
+
+/** Requests with a prompt above this are counted apart (`usage.long`): the long rate card starts here. */
+export const LONG_PROMPT_TOKENS = 100_000;
+
+/** The rate card a request with this many prompt tokens is billed on. */
+export function priceAt(family: Family, promptTokens?: number): Price {
+  const long = LONG_PRICES[family];
+  return long && promptTokens !== undefined && promptTokens > long.above ? long.price : PRICES[family];
+}
 
 /** Characters per token for the char counts the ledger keeps. */
 const CHARS_PER_TOKEN = 3.5;
@@ -49,21 +69,40 @@ export function familyOf(model: string | undefined): Family | undefined {
   if (m.includes('fable') || m.includes('mythos')) return 'fable';
   if (m.includes('opus')) return 'opus';
   if (m.includes('sonnet')) return 'sonnet';
-  if (m.includes('haiku')) return 'haiku';
+  if (m.includes('haiku')) return /haiku-[34]|3(-5)?-haiku/.test(m) ? 'haiku4' : 'haiku';
   return undefined;
 }
 
 type Usage = NonNullable<LedgerEntry['usage']>;
 
-/** A turn's cost on a model family by token kind; the main conversation writes the 1-hour cache. */
-export function usageCostParts(usage: Usage, family: Family, main: boolean): CostBreakdown {
-  const p = PRICES[family];
+type Tokens = { input: number; output: number; cacheRead: number; cacheWrite: number };
+
+function priced(t: Tokens, p: Price, main: boolean): CostBreakdown {
   return {
-    input: (usage.input * p.input) / 1e6,
-    output: (usage.output * p.output) / 1e6,
-    cacheRead: (usage.cacheRead * p.cacheRead) / 1e6,
-    cacheWrite: (usage.cacheWrite * (main ? p.write1h : p.write5m)) / 1e6,
+    input: (t.input * p.input) / 1e6,
+    output: (t.output * p.output) / 1e6,
+    cacheRead: (t.cacheRead * p.cacheRead) / 1e6,
+    cacheWrite: (t.cacheWrite * (main ? p.write1h : p.write5m)) / 1e6,
   };
+}
+
+/**
+ * A turn's cost on a model family by token kind; the main conversation writes the 1-hour cache.
+ * The part of it from long-prompt requests (`usage.long`) is priced on the family's long rate card.
+ */
+export function usageCostParts(usage: Usage, family: Family, main: boolean): CostBreakdown {
+  const long = LONG_PRICES[family];
+  if (!long || !usage.long) return priced(usage, PRICES[family], main);
+  const l = usage.long;
+  const short = {
+    input: Math.max(0, usage.input - l.input),
+    output: Math.max(0, usage.output - l.output),
+    cacheRead: Math.max(0, usage.cacheRead - l.cacheRead),
+    cacheWrite: Math.max(0, usage.cacheWrite - l.cacheWrite),
+  };
+  const a = priced(short, PRICES[family], main);
+  const b = priced(l, long.price, main);
+  return { input: a.input + b.input, output: a.output + b.output, cacheRead: a.cacheRead + b.cacheRead, cacheWrite: a.cacheWrite + b.cacheWrite };
 }
 
 /** Cost of a turn's tokens on a model family; the main conversation writes the 1-hour cache. */

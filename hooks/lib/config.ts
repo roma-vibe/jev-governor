@@ -13,7 +13,7 @@ export const DEFAULT_CONFIG: GovernorConfig = {
     keyFile: '~/.claude/jev-governor/openrouter.key',
     timeoutMs: 2500,
   },
-  models: { standard: 'claude-sonnet-5-5', strong: 'claude-opus-5-5', light: 'claude-haiku-4-5-20251001' },
+  models: { standard: 'claude-sonnet-5-5', strong: 'claude-opus-5-5', light: 'claude-haiku-5-5' },
   router: {
     mainModel: true,
     mainEffort: true,
@@ -22,9 +22,10 @@ export const DEFAULT_CONFIG: GovernorConfig = {
     forceUpgradeAt: 0.8,
     downgradeAt: 0.65,
     subagentStrongAt: 0.5,
-    lightSubagents: 'shadow',
-    lightBelow: 0.15,
-    lightMaxSteps: 30,
+    // Haiku 5.5 (2026-10): 20× cheaper than Sonnet 5.5 under a 100K prompt, 4× above, 1M window, effort levels.
+    lightSubagents: 'on',
+    lightBelow: 0.25,
+    lightMaxSteps: 80,
     cheapSwitchTokens: 30_000,
     expectedTurns: 4,
     standardMaxContextTokens: 180_000,
@@ -112,6 +113,20 @@ export const DEFAULT_CONFIG: GovernorConfig = {
     describeWithClaude: true,
     showWorktrees: false,
   },
+  memory: {
+    enabled: false,
+    server: 'mnema-memory',
+    autoStart: true,
+    startCommand: '',
+    recallOnStart: true,
+    recallForSubagents: true,
+    subagentMinChars: 200,
+    saveOnHandoff: true,
+    modelTools: true,
+    maxChars: 2_500,
+    maxFacts: 12,
+    timeoutMs: 2_500,
+  },
   ui: { port: 4777, language: 'auto', showStatus: true, nodePath: 'node', terminal: 'Terminal' },
   savings: { effortFactor: 0.3, defaultBaseModel: 'claude-opus-5-5', defaultBaseEffort: 'xhigh' },
   codex: { enabled: false },
@@ -165,6 +180,7 @@ export function resolveConfig(raw: unknown): GovernorConfig {
   const h = isObject(c.handoff) ? c.handoff : {};
   const ui = isObject(c.ui) ? c.ui : {};
   const pr = isObject(c.projects) ? c.projects : {};
+  const me = isObject(c.memory) ? c.memory : {};
   const sv = isObject(c.savings) ? c.savings : {};
   const codex = isObject(c.codex) ? c.codex : {};
   const minEffort = effort(r.minEffort, d.router.minEffort);
@@ -186,7 +202,8 @@ export function resolveConfig(raw: unknown): GovernorConfig {
     models: {
       standard: str(models.standard, d.models.standard),
       strong: str(models.strong, d.models.strong),
-      light: str(models.light, d.models.light),
+      // Haiku 4.5 named in an older config: Haiku 5.5 replaces it (cheaper, effort levels, 1M window).
+      light: /haiku-4|3(-5)?-haiku/i.test(str(models.light, d.models.light)) ? d.models.light : str(models.light, d.models.light),
     },
     router: {
       mainModel: bool(r.mainModel, d.router.mainModel),
@@ -196,7 +213,7 @@ export function resolveConfig(raw: unknown): GovernorConfig {
       forceUpgradeAt: num(r.forceUpgradeAt, d.router.forceUpgradeAt, 0, 1),
       downgradeAt: num(r.downgradeAt, d.router.downgradeAt, 0, 1),
       subagentStrongAt: num(r.subagentStrongAt, d.router.subagentStrongAt, 0, 1),
-      lightSubagents: r.lightSubagents === 'on' || r.lightSubagents === 'off' ? r.lightSubagents : 'shadow',
+      lightSubagents: r.lightSubagents === 'shadow' || r.lightSubagents === 'off' || r.lightSubagents === 'on' ? r.lightSubagents : d.router.lightSubagents,
       lightBelow: num(r.lightBelow, d.router.lightBelow, 0, 1),
       lightMaxSteps: num(r.lightMaxSteps, d.router.lightMaxSteps, 1, 500),
       cheapSwitchTokens: num(r.cheapSwitchTokens, d.router.cheapSwitchTokens, 0, 2_000_000),
@@ -295,6 +312,20 @@ export function resolveConfig(raw: unknown): GovernorConfig {
       minSuccesses: num(pr.minSuccesses, d.projects.minSuccesses, 1, 50),
       describeWithClaude: bool(pr.describeWithClaude, d.projects.describeWithClaude),
       showWorktrees: bool(pr.showWorktrees, d.projects.showWorktrees),
+    },
+    memory: {
+      enabled: bool(me.enabled, d.memory.enabled),
+      server: str(me.server, d.memory.server),
+      autoStart: bool(me.autoStart, d.memory.autoStart),
+      startCommand: typeof me.startCommand === 'string' ? me.startCommand : d.memory.startCommand,
+      recallOnStart: bool(me.recallOnStart, d.memory.recallOnStart),
+      recallForSubagents: bool(me.recallForSubagents, d.memory.recallForSubagents),
+      subagentMinChars: num(me.subagentMinChars, d.memory.subagentMinChars, 0, 100_000),
+      saveOnHandoff: bool(me.saveOnHandoff, d.memory.saveOnHandoff),
+      modelTools: bool(me.modelTools, d.memory.modelTools),
+      maxChars: num(me.maxChars, d.memory.maxChars, 200, 20_000),
+      maxFacts: num(me.maxFacts, d.memory.maxFacts, 1, 50),
+      timeoutMs: num(me.timeoutMs, d.memory.timeoutMs, 200, 30_000),
     },
     ui: {
       terminal: 'Terminal',
