@@ -94,7 +94,7 @@ scripts/mnema-local.sh start
 claude mcp add mnema-memory --scope user -- ~/Documents/mnema-mcp/.venv/bin/mnema-mcp
 ```
 
-Then `/jevg memory on`. `mnema-mcp doctor` checks the chain; `node scripts/monitor.mjs` reports recalls, facts added, failures and the model's own memory calls (section 6). The local server runs with `MNEMA_LLM=mock` by default: saving and `search` work fully, `recall` matches by words in common with the task.
+Then `/jevg memory on`. `mnema-mcp doctor` checks the chain; `node scripts/monitor.mjs` reports recalls, facts added, failures and the model's own memory calls (section 6). `scripts/mnema-local.sh` runs the server on real models through OpenRouter when `.openrouter_key` (or `OPENROUTER_API_KEY`) exists: `recall` then matches by meaning (about 0.5 s; texts of facts and tasks go to OpenRouter). Without a key it falls back to the offline mock, where `recall` matches only shared words. After switching, `scripts/mnema-local.sh reembed` embeds the facts saved earlier.
 
 ## UI
 

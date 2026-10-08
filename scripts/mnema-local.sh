@@ -3,14 +3,20 @@
 #   mnema-local.sh start|stop|status|key <name>
 # Environment: MNEMA_REPO (the Mnema checkout, default ~/Documents/startUpProject),
 # MNEMA_DATA_DIR (default ~/.mnema-local), MNEMA_PORT (default 8787),
-# MNEMA_LLM (mock by default: offline, no model calls; openrouter needs OPENROUTER_API_KEY).
+# MNEMA_LLM (openrouter when OPENROUTER_API_KEY or the key file MNEMA_KEY_FILE, default
+# <repo>/.openrouter_key, exists; else mock: offline, no model calls).
 # The server runs in its own session (setsid), so it outlives the process that started it.
 set -eu
 
 REPO="${MNEMA_REPO:-$HOME/Documents/startUpProject}"
 DATA="${MNEMA_DATA_DIR:-$HOME/.mnema-local}"
 PORT="${MNEMA_PORT:-8787}"
-LLM="${MNEMA_LLM:-mock}"
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+KEYFILE="${MNEMA_KEY_FILE:-$HERE/.openrouter_key}"
+# Real models (meaning-based recall) when an OpenRouter key is at hand, else the offline mock.
+if [ -z "${OPENROUTER_API_KEY:-}" ] && [ -f "$KEYFILE" ]; then OPENROUTER_API_KEY="$(tr -d '[:space:]' <"$KEYFILE")"; fi
+export OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
+if [ -n "${MNEMA_LLM:-}" ]; then LLM="$MNEMA_LLM"; elif [ -n "$OPENROUTER_API_KEY" ]; then LLM=openrouter; else LLM=mock; fi
 URL="http://127.0.0.1:$PORT"
 PIDFILE="$DATA/server.pid"
 LOG="$DATA/server.log"
@@ -54,8 +60,13 @@ case "${1:-status}" in
     B="$(bin)"
     MNEMA_DATA_DIR="$DATA" "$B" local-key "${2:-claude-code}" --plan pro
     ;;
+  reembed)
+    # Embeds stored facts that have no vectors yet (after switching from mock to openrouter).
+    B="$(bin)"
+    MNEMA_DATA_DIR="$DATA" MNEMA_LLM="$LLM" "$B" reembed
+    ;;
   *)
-    echo "usage: $0 start|stop|status|key [name]" >&2
+    echo "usage: $0 start|stop|status|key [name]|reembed" >&2
     exit 2
     ;;
 esac
