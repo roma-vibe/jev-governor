@@ -8,6 +8,7 @@ import {
   decideSubagent,
   escalate,
   fallbackDecision,
+  looksLikeReading,
   isShortFollowUp,
   mainQuestions,
   readSignals,
@@ -214,6 +215,13 @@ describe('fallbackDecision', () => {
     const capped = resolveConfig({ router: { fallbackEffort: 'xhigh', maxEffort: 'high' } });
     expect(fallbackDecision('strong', 'x', capped).effort).toBe('high');
     expect(fallbackDecision('strong', 'Jev unavailable', cfg).reasons[0]).toContain('(fallback)');
+  });
+});
+
+describe('looksLikeReading', () => {
+  it('matches research-like titles, not build tasks', () => {
+    for (const t of ['Research FLUX API', 'Explore the repo', 'Audit auth flow', ' review PR', '#12 Find callers', 'Look up the docs']) expect(looksLikeReading(t)).toBe(true);
+    for (const t of ['#4 AI providers+ connectors', 'Wave 0 frontend shell', 'Fix the parser', 'Researcher agent scaffold']) expect(looksLikeReading(t)).toBe(false);
   });
 });
 

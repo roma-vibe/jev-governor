@@ -63,6 +63,7 @@ import {
   decideSubagent,
   escalate,
   fallbackDecision,
+  looksLikeReading,
   isShortFollowUp,
   MAIN_STATE_CONTEXT,
   mainQuestions,
@@ -420,9 +421,11 @@ async function askJev(
   $: EngineInterface,
   state: object,
   questions: JevQuestions,
-  timeoutMs = S.cfg.jev.timeoutMs,
+  timeoutMs?: number,
   purpose = 'decision',
 ): Promise<{ response: JevResponse; ms: number } | undefined> {
+  // A spawn is rare and followed by minutes of work: it waits longer than a turn's decision does.
+  timeoutMs ??= purpose === 'subagent' ? Math.max(S.cfg.jev.subagentTimeoutMs, S.cfg.jev.timeoutMs) : S.cfg.jev.timeoutMs;
   const key = jevKey();
   if (!key) return undefined;
   const asker = makeAsker($, key, purpose);
@@ -432,7 +435,9 @@ async function askJev(
   // without a decision runs on the session's own effort. Not while Jev keeps
   // failing (each turn would wait twice for nothing), not for trims or
   // compactions (they keep everything without Jev anyway).
-  const retry = (purpose === 'decision' || purpose === 'subagent') && S.jevFailures === 0;
+  // A spawn retries even in an outage: it is the one decision worth waiting for (a whole subagent run
+  // is priced by it) and there are few of them.
+  const retry = purpose === 'subagent' || (purpose === 'decision' && S.jevFailures === 0);
   const once = (): Promise<JevResponse> => withTimeout(asker.ask(state, questions), (ms) => $.clock.sleep(ms), timeoutMs);
   try {
     let response: JevResponse;
@@ -714,8 +719,12 @@ async function planSpawn(
   // The fallback leaves the model alone unless the agent pins it (an Explore agent keeps its own).
   let keepModel = false;
   if (cfg.router.subagents && jevDown) {
-    decision = fallbackDecision(pinnedTier ?? tierOf(e.model ?? e.parentModel, cfg) ?? 'strong', 'Jev unavailable', cfg, pinnedEffort);
-    keepModel = pinnedTier === undefined;
+    // Research-like errands without a pinned tier go to the standard model at medium effort.
+    const reading = cfg.router.fallbackReadOnlyStandard && pinnedTier === undefined && looksLikeReading(e.description);
+    decision = reading
+      ? fallbackDecision('standard', 'Jev unavailable, research-like task on the standard model', cfg, pinnedEffort ?? 'medium')
+      : fallbackDecision(pinnedTier ?? tierOf(e.model ?? e.parentModel, cfg) ?? 'strong', 'Jev unavailable', cfg, pinnedEffort);
+    keepModel = pinnedTier === undefined && !reading;
   } else if (cfg.router.subagents && signals) {
     decision = decideSubagent(
       signals,
@@ -2703,6 +2712,13 @@ export const register: Register = (on) => {
     await ensureInit($);
     const tool: string = e.tool;
     if (isMemoryTool(tool, S.cfg.memory.server)) {
+      if (memoryOn() && S.cfg.memory.modelTools && !S.cfg.memory.modelRecall && /__recall$/.test(tool)) {
+        await ledger($, { kind: 'memory', text: tool, memory: { action: 'refuse', for: 'model', ok: false } });
+        return {
+          decision: 'deny',
+          reason: 'jev-governor already recalled the memory for this task (see the <memory> block). Use `search` for a specific question, or continue without recall.',
+        };
+      }
       if (memoryOn() && S.cfg.memory.modelTools) return { decision: 'allow' };
       if (S.cfg.enabled) {
         await ledger($, { kind: 'memory', text: tool, memory: { action: 'refuse', for: 'model', ok: false } });

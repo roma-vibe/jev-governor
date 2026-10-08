@@ -586,18 +586,18 @@ async function main() {
       `Капсул: ${created.length} (с брифом ${count(created, (e) => e.handoff.brief)}, через /jevg fresh ${count(created, (e) => e.handoff.fresh)}); подключений: ${count(handoffs, (e) => e.handoff?.action === 'attach')}; очисток чата: ${count(handoffs, (e) => e.handoff?.action === 'clear')}; /jevg fresh отменён: ${count(handoffs, (e) => e.handoff?.action === 'cancel')}.`,
       ...created.slice(-5).map((e) => `- ${e.handoff.id}: ${k(e.handoff.tokens)} вместо ${k(e.handoff.sourceTokens)}${(e.reasons ?? []).length ? ` · ${e.reasons.join('; ')}` : ''}`),
       `Подсказок: ${hints.length} (при остывшем кэше ${count(hints, (e) => (e.reasons ?? []).includes('cache cold'))}); за подсказкой в течение 30 минут последовала капсула: ${followed.length}.`,
-      ...memoryLines(by('memory')),
+      ...memoryLines([...by('memory'), ...by('subagent').filter((e) => e.memory).map((e) => ({ ...e, kind: 'memory' }))]),
     ]),
   );
   {
-    const mem = by('memory').filter((e) => e.memory?.action === 'recall' && e.memory.for !== 'model');
+    const mem = [...by('memory'), ...by('subagent').filter((e) => e.memory)].filter((e) => e.memory?.action === 'recall' && e.memory.for !== 'model');
     const failed = mem.filter((e) => !e.memory.ok).length;
     if (mem.length >= 5 && failed / mem.length > 0.3) {
       advice.push(`Память: ${failed} из ${mem.length} recall не удались — проверьте сервер (/jevg memory, scripts/mnema-local.sh status).`);
     }
     const modelRecalls = by('memory').filter((e) => e.memory?.for === 'model' && e.text === 'recall').length;
     if (modelRecalls > mem.length && modelRecalls >= 5) {
-      advice.push(`Модель сама вызывает recall чаще мода (${modelRecalls} против ${mem.length}): каждый такой вызов — шаг поверх всего контекста; можно выключить memory.modelTools.`);
+      advice.push(`Модель сама вызывает recall чаще мода (${modelRecalls} против ${mem.length}): каждый такой вызов — шаг поверх всего контекста; в 0.3.6 такой recall отклоняется (memory.modelRecall выключен), проверьте, что мод перезагрузился.`);
     }
   }
 

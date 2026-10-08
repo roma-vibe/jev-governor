@@ -826,7 +826,7 @@ describe('jev-governor hooks against a fake engine', () => {
     try {
       const result = await emit(
         'agent.spawn',
-        { subagentType: 'general-purpose', description: 'Review skeleton', prompt: 'Review the laravel skeleton end to end.', parentModel: 'claude-opus-5-5' },
+        { subagentType: 'general-purpose', description: 'Build skeleton', prompt: 'Review the laravel skeleton end to end.', parentModel: 'claude-opus-5-5' },
         async (x: any) => {
           spawned = x;
           return { agentId: 'sub-1', model: x.model ?? x.parentModel };
@@ -850,6 +850,29 @@ describe('jev-governor hooks against a fake engine', () => {
     expect(effort).toBe('high');
     const ledger = [...files.entries()].filter(([p]) => p.endsWith('spawn-session.jsonl')).map(([, t]) => t).join('');
     expect(ledger).toContain('wait note added');
+  });
+
+  it('a research-like subagent spawned while Jev is down goes to the standard model at medium effort; a build task keeps the parent model', async () => {
+    await startSession('spawn-research');
+    jevDown = true;
+    const spawn = async (description: string): Promise<any> => {
+      let spawned: any;
+      await emit(
+        'agent.spawn',
+        { subagentType: 'general-purpose', description, prompt: 'Look up the public API of the service and list the endpoints.', parentModel: 'claude-opus-5-5' },
+        async (x: any) => {
+          spawned = x;
+          return { agentId: `sub-${description}`, model: x.model ?? x.parentModel };
+        },
+      );
+      return spawned;
+    };
+    try {
+      expect((await spawn('Research FLUX API')).model).toBe('claude-sonnet-5-5');
+      expect((await spawn('#4 AI providers connectors')).model).toBeUndefined();
+    } finally {
+      jevDown = false;
+    }
   });
 
   it('an easy read-only subagent runs on the light model when that is on, only records it in shadow, and moves up when the task grows', async () => {
@@ -1155,6 +1178,11 @@ describe('jev-governor hooks against a fake engine', () => {
       expect(mcpCalls).toHaveLength(1);
       expect(ledgerOf('mem-on').find((e) => e.kind === 'memory')).toMatchObject({ applied: true, memory: { action: 'recall', for: 'prompt', ok: true, facts: 1 } });
       expect((await emit('tool.check', { tool: 'mcp__mnema-memory__save_fact', input: {} }, async () => ({ decision: 'ask' }))).decision).toBe('allow');
+      // The model's own recall is refused (the mod recalled already); its other tools stay.
+      const recall = await emit('tool.check', { tool: 'mcp__mnema-memory__recall', input: {} }, async () => ({ decision: 'ask' }));
+      expect(recall.decision).toBe('deny');
+      expect(recall.reason).toContain('already recalled');
+      expect((await emit('tool.check', { tool: 'mcp__mnema-memory__search', input: {} }, async () => ({ decision: 'ask' }))).decision).toBe('allow');
     });
 
     it('a stopped server is started once and asked again; then the memory is left alone for a while', async () => {

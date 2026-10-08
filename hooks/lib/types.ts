@@ -29,6 +29,11 @@ export type GovernorConfig = {
     keyFile: string;
     /** A decision that takes longer is abandoned and nothing changes. */
     timeoutMs: number;
+    /**
+     * The same for a subagent spawn: rare, and followed by minutes of work, so it can wait longer.
+     * A spawn also retries once when Jev failed just before (an outage hits the spawns too).
+     */
+    subagentTimeoutMs: number;
   };
   models: Record<Tier, string> & {
     /** The light model read-only subagents may run on (`router.lightSubagents`). */
@@ -73,6 +78,13 @@ export type GovernorConfig = {
     defaultEffort: Effort;
     /** Effort when Jev cannot be reached and there is no earlier decision (a chat's or a subagent's first turn). */
     fallbackEffort: Effort;
+    /**
+     * Jev unreachable at a subagent spawn: a task that reads like research (description starts with
+     * research / explore / find / audit / review ...) runs on the standard model at medium effort
+     * instead of keeping the parent's tier. On 8 October a Jev outage left twenty such "Research X API"
+     * subagents on Opus.
+     */
+    fallbackReadOnlyStandard: boolean;
     /** Jev confidence below which its effort score is ignored. */
     effortConfidenceAt: number;
     /** Failed tool calls in one turn before effort goes up one level (0 = never). */
@@ -246,6 +258,13 @@ export type GovernorConfig = {
     saveOnHandoff: boolean;
     /** The model may call the memory's tools itself (save_fact, recall, ...); off, those calls are refused. */
     modelTools: boolean;
+    /**
+     * The model may call `recall` itself. Off (default), that one call is refused while its other
+     * tools (save_fact, search, ...) stay: the mod already recalls at the start of a chat and for
+     * subagents, and the server's own instruction makes every subagent recall again, a step over
+     * the whole context that mostly returns nothing.
+     */
+    modelRecall: boolean;
     /** Most characters of notes added to one prompt. */
     maxChars: number;
     /** Most facts added to one prompt. */

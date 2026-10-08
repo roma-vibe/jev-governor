@@ -311,6 +311,12 @@ export default {
   'Decision timeout': 'Таймаут решения',
   'If Jev takes longer to respond, the decision is dropped and nothing changes. Smaller means a faster turn, but “no decision” more often.':
     'Если Jev отвечает дольше, решение отбрасывается и ничего не меняется. Меньше — быстрее ход, но чаще «без решения».',
+  'Subagent decision timeout': 'Таймаут решения для субагента',
+  'The same for a subagent spawn. A spawn is rare and followed by minutes of work, so it waits longer and retries once even while Jev is failing.':
+    'То же для запуска субагента. Запуск редкий, за ним минуты работы, поэтому он ждёт дольше и повторяет запрос один раз, даже когда Jev даёт сбои.',
+  'Research tasks on Sonnet when Jev does not respond': 'Исследовательские задачи на Sonnet, когда Jev не отвечает',
+  'A subagent whose title starts with research, explore, find, audit, review and the like runs on the standard model at medium effort when Jev is unavailable. Off: it keeps the parent model.':
+    'Субагент, название которого начинается с research, explore, find, audit, review и подобных, при недоступном Jev идёт на стандартной модели с effort medium. Выключено — остаётся модель родителя.',
   'Projects': 'Проекты',
   'Project pages (the “Projects” tab): commands found in the project files and commands that Claude ran successfully there. Project folders are only read, nothing is written to them.':
     'Страницы проектов (вкладка «Проекты»): команды, найденные в файлах проекта, и команды, которые Claude успешно запускал там. Папки проектов только читаются, ничего в них не записывается.',
@@ -427,6 +433,10 @@ export default {
     "Модель может пользоваться инструментами памяти",
   "The model may save facts and recall on its own. Each call is a step over the whole context; the notes the mod adds tell it the task is already recalled. Off: its memory calls are refused and the notes carry no ids.":
     "Модель может сама сохранять факты и вызывать recall. Каждый вызов — шаг поверх всего контекста; заметки мода говорят ей, что recall по задаче уже сделан. Выключено — её вызовы памяти отклоняются, а в заметках нет id.",
+  "Let the model call recall itself":
+    "Модель может сама вызывать recall",
+  "Off: only its recall is refused (the mod already recalls at the start of a chat and for subagents); save_fact and search stay. Subagents otherwise recall again on the server’s own instruction, a step over the whole context that mostly returns nothing.":
+    "Выключено: отклоняется только её recall (мод уже делает recall в начале чата и для субагентов); save_fact и search остаются. Иначе субагенты по инструкции самого сервера делают recall ещё раз — шаг поверх всего контекста, который чаще всего ничего не возвращает.",
   "Facts at most":
     "Фактов не больше",
   "How many facts one recall adds.":

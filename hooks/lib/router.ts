@@ -402,6 +402,13 @@ export function fallbackDecision(tier: Tier, why: string, config: GovernorConfig
   return { tier, effort, switched: false, reasons: [`${why}: effort ${effort} (fallback)`] };
 }
 
+/** A spawn that reads like research (no Jev to say so): its title starts with a reading verb. */
+const READING_TASK = /^\s*(?:#\d+\s+)?(research|investigate|explore|search|find|look up|survey|audit|review|read|analy[sz]e|summari[sz]e|check|compare|inspect|list|scan|study)\b/i;
+
+export function looksLikeReading(description: string): boolean {
+  return READING_TASK.test(description);
+}
+
 export function tierOf(model: string, config: GovernorConfig): Tier | undefined {
   const m = model.toLowerCase();
   if (m === config.models.strong.toLowerCase() || m.includes('opus')) return 'strong';

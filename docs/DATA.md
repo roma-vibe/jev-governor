@@ -136,7 +136,7 @@ decides per task.
   qualified, but the trim would have removed under 15%, so it stayed whole.
 - `turn` / `subagent` reasons end in `(fallback)` when Jev could not be
   reached and there was no earlier decision: the model stayed, the effort is
-  `router.fallbackEffort`. A routing request Jev dropped once is retried; the
+  `router.fallbackEffort`. A routing request Jev dropped once is retried (a subagent spawn always, waiting `jev.subagentTimeoutMs`, 8000; with Jev still down, a research-like spawn (`router.fallbackReadOnlyStandard`) goes to the standard model at medium effort); the
   first failure is logged as an `error` ending in `(retrying)`.
 - A `subagent` reason `wait note added`: the task got the `<cache-note>`
   (`agents.waitHint`) asking it to keep every wait under 4 minutes.
@@ -196,5 +196,5 @@ into input, output, cache reads and cache writes.
   subagents would have cost on Haiku.
 - `memory` (0.3.5): `enabled` (false), `server` (`mnema-memory`, the MCP server's name), `autoStart` (true),
   `startCommand` (empty: `scripts/mnema-local.sh start`), `recallOnStart` (true), `recallForSubagents` (true),
-  `subagentMinChars` (200), `saveOnHandoff` (true), `modelTools` (true), `maxChars` (2500), `maxFacts` (12),
+  `subagentMinChars` (200), `saveOnHandoff` (true), `modelTools` (true), `modelRecall` (false), `maxChars` (2500), `maxFacts` (12),
   `timeoutMs` (2500). See README, "Long-term memory".

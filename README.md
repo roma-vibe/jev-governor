@@ -77,7 +77,7 @@ Optional, off by default. The mod talks to a memory MCP server (Mnema) through C
 - **First task of a chat:** the mod runs `recall` on it and adds the notes as hidden context (a few hundred tokens; nothing when nothing relevant is stored). Not when a capsule is attached, which already carries the context.
 - **Subagents:** a subagent with a real task (`memory.subagentMinChars`) gets the notes appended to its prompt; the recall runs while the model is chosen.
 - **Handoff:** the brief of `/jevg getctx` / `/jevg fresh` is saved with `save_session`, in the background.
-- **The model's own calls:** allowed (`memory.modelTools`). The server asks the model to recall at the start of a task, which is a step over the whole context; the notes the mod adds say the task is already recalled. Off, the memory tools are refused.
+- **The model's own calls:** allowed (`memory.modelTools`), except `recall` (`memory.modelRecall`, off): the mod already recalls at the start of a chat and for subagents, and the server asks every subagent to recall again, a step over the whole context that mostly returns nothing. `save_fact`, `search` and the rest stay. Off `modelTools`, all the memory tools are refused.
 - **Failures cost one timeout:** `memory.timeoutMs` (2.5 s), then the memory is left alone for a minute. A server that does not answer is started (`scripts/mnema-local.sh start`, at most every 10 minutes).
 
 Set up locally (once):

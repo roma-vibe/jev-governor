@@ -207,6 +207,12 @@ export function getSections(): Section[] {
           help: t('The first turn of a chat or subagent when Jev is unavailable and there is no previous decision. Without this, the turn would run at the session effort (often xhigh).'),
         },
         {
+          path: 'router.fallbackReadOnlyStandard',
+          label: t('Research tasks on Sonnet when Jev does not respond'),
+          kind: 'bool',
+          help: t('A subagent whose title starts with research, explore, find, audit, review and the like runs on the standard model at medium effort when Jev is unavailable. Off: it keeps the parent model.'),
+        },
+        {
           path: 'router.effortConfidenceAt',
           label: t('Confidence threshold for effort'),
           ...prob,
@@ -683,6 +689,12 @@ export function getSections(): Section[] {
           help: t('The model may save facts and recall on its own. Each call is a step over the whole context; the notes the mod adds tell it the task is already recalled. Off: its memory calls are refused and the notes carry no ids.'),
         },
         {
+          path: 'memory.modelRecall',
+          label: t('Let the model call recall itself'),
+          kind: 'bool',
+          help: t('Off: only its recall is refused (the mod already recalls at the start of a chat and for subagents); save_fact and search stay. Subagents otherwise recall again on the server’s own instruction, a step over the whole context that mostly returns nothing.'),
+        },
+        {
           path: 'memory.maxFacts',
           label: t('Facts at most'),
           kind: 'number',
@@ -947,6 +959,16 @@ export function getSections(): Section[] {
           max: 20_000,
           unit: t('ms'),
           help: t('If Jev takes longer to respond, the decision is dropped and nothing changes. Smaller means a faster turn, but “no decision” more often.'),
+        },
+        {
+          path: 'jev.subagentTimeoutMs',
+          label: t('Subagent decision timeout'),
+          kind: 'number',
+          step: 500,
+          min: 300,
+          max: 60_000,
+          unit: t('ms'),
+          help: t('The same for a subagent spawn. A spawn is rare and followed by minutes of work, so it waits longer and retries once even while Jev is failing.'),
         },
       ],
     },
