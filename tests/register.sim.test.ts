@@ -79,6 +79,10 @@ let draftReply: string | undefined;
 /** Merges asked of the model, and its reply. */
 let merges = 0;
 let mergeReply = '{"agents": [], "skills": []}';
+let extractReply = '{"facts":[]}';
+let criticReply = '{"keep":[0]}';
+const timerMs = new WeakMap<() => void, number>();
+const extractCalls: { system?: string; prompt?: string; model?: string }[] = [];
 /** Compaction: drop whole calls too, not only their outputs. */
 let dropCalls = false;
 /** `/clear` ends the conversation; false: it returns and changes nothing. */
@@ -165,7 +169,8 @@ const $ = {
     copy: async () => ({ isCopied: false, reason: 'no-surface' }),
   },
   clock: {
-    after: (_ms: number, fn: () => void) => {
+    after: (ms: number, fn: () => void) => {
+      timerMs.set(fn, ms);
       timers.push(fn);
       return { cancel: () => void timers.splice(timers.indexOf(fn), 1) };
     },
@@ -218,7 +223,15 @@ const $ = {
   agent: { register: async () => ({}) },
   model: {
     // Drafting a specialist takes a while: parallel spawns overlap.
-    complete: async (input: { system?: string }) => {
+    complete: async (input: { system?: string; prompt?: string; model?: string }) => {
+      if (input.system?.includes('maintain the long-term memory')) {
+        extractCalls.push(input);
+        return { isAnswered: true, text: extractReply };
+      }
+      if (input.system?.includes('check candidate facts')) {
+        extractCalls.push(input);
+        return { isAnswered: true, text: criticReply };
+      }
       if (input.system?.includes('near-copies')) {
         merges++;
         return { isAnswered: true, text: mergeReply };
@@ -237,10 +250,13 @@ const $ = {
   },
 };
 
-async function emit(event: string, e: unknown, core: Handler = async (x: unknown) => x): Promise<any> {
+async function emit(event: string, e: unknown, core: Handler = async (x: unknown) => x, origin?: { plugin: string }): Promise<any> {
   const chain = handlers.get(event) ?? [];
-  const run = (i: number, input: unknown): Promise<unknown> =>
-    i < chain.length ? Promise.resolve(chain[i]!($, input, (next: unknown) => run(i + 1, next))) : Promise.resolve(core(input));
+  const run = (i: number, input: unknown): Promise<unknown> => {
+    if (i >= chain.length) return Promise.resolve(core(input));
+    const next = Object.assign((x: unknown) => run(i + 1, x), origin ? { origin } : {});
+    return Promise.resolve(chain[i]!($, input, next));
+  };
   return run(0, e);
 }
 
@@ -1235,6 +1251,120 @@ describe('jev-governor hooks against a fake engine', () => {
     const ledgerOf = (id: string): Record<string, any>[] =>
       [...files.entries()].filter(([p]) => p.endsWith(`${id}.jsonl`)).flatMap(([, t]) => t.split('\n').filter(Boolean).map((l) => JSON.parse(l)));
 
+    describe('autosave from the dialog', () => {
+      const turn = (user: string, answer: string) => [
+        { role: 'user', text: user, toolUses: [] },
+        { role: 'assistant', text: answer, toolUses: [] },
+      ];
+      const GOOD = 'We keep the router state per chat in route.json because a resumed chat must not lose its cache plan.';
+      let saved: Record<string, unknown>[] = [];
+      const memoryServer = async (tool: string, args?: Record<string, unknown>) => {
+        if (tool === 'save_fact') saved.push(args ?? {});
+        return { content: [{ type: 'text', text: '{}' }], isError: false, structuredContent: tool === 'list_facts' ? { memories: [{ scope: 'project', facts: [{ id: 'f1', text: 'Mod tests run with npm test (vitest).', status: 'active' }] }] } : undefined };
+      };
+      const setup = async (id: string, extra: Record<string, unknown> = {}) => {
+        await setMemory({ enabled: true, autoSave: true, autoSaveEveryTurns: 2, ...extra });
+        mcpReply = memoryServer;
+        saved = [];
+        extractCalls.length = 0;
+        extractReply = JSON.stringify({ facts: [{ text: GOOD, type: 'decision', scope: 'project', importance: 'normal' }] });
+        criticReply = '{"keep":[0]}';
+        await startSession(id);
+        messages = [
+          ...turn('почему мы храним состояние роутера на чат, а не глобально?', 'Потому что возобновлённый чат не должен терять план кэша, поэтому оно лежит в route.json.'),
+          ...turn('хорошо, оставим так и запишем это решение в документацию проекта', 'Готово: решение записано, состояние остаётся в route.json на каждый чат.'),
+        ];
+      };
+      const finishTurn = async (id: string) => {
+        await emit('turn.complete', { turnId: id, answer: 'ok', reason: 'answer', isAborted: false, durationMs: 1 }, async () => ({ text: '' }));
+      };
+      // Runs the timers due within `within` ms (the idle one waits minutes).
+      const flush = async (within = 5000) => {
+        for (let i = 0; i < 8; i++) {
+          for (const fn of [...timers]) {
+            if ((timerMs.get(fn) ?? 0) > within) continue;
+            timers.splice(timers.indexOf(fn), 1);
+            fn();
+          }
+          await new Promise<void>((r) => void macrotask(r));
+        }
+      };
+
+      it('every few turns: the turns are read, a fact passes the checking pass and is saved with the auto tag', async () => {
+        await setup('as-1');
+        await finishTurn('t1');
+        await flush();
+        expect(saved).toHaveLength(0);
+        await finishTurn('t2');
+        await flush();
+        expect(saved).toHaveLength(1);
+        expect(saved[0]).toMatchObject({ fact: GOOD, type: 'decision', scope: 'project', tags: ['auto'] });
+        expect(extractCalls).toHaveLength(2);
+        expect(extractCalls[0]!.prompt).toContain('Mod tests run with npm test');
+        expect(ledgerOf('as-1').find((e) => e.memory?.action === 'extract')).toMatchObject({ memory: { ok: true, facts: 1, offered: 1, turns: 2 } });
+        // The same turns are not read again.
+        await finishTurn('t3');
+        await finishTurn('t4');
+        await flush();
+        expect(saved).toHaveLength(1);
+      });
+
+      it('the checking pass can drop everything, and then nothing is saved', async () => {
+        await setup('as-2');
+        criticReply = '{"keep":[]}';
+        await finishTurn('t1');
+        await finishTurn('t2');
+        await flush();
+        expect(saved).toHaveLength(0);
+        expect(ledgerOf('as-2').find((e) => e.memory?.action === 'extract')).toMatchObject({ memory: { ok: true, facts: 0, offered: 1 } });
+      });
+
+      it('a fact that is progress, a repeat of a stored one, or holds a secret never reaches the memory', async () => {
+        await setup('as-3');
+        extractReply = JSON.stringify({
+          facts: [
+            { text: 'Currently the autosave work is in progress on the agents-dedupe branch of this repo.', type: 'context' },
+            { text: 'Mod tests run with npm test (vitest).', type: 'workflow' },
+            { text: 'The deploy key is sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789 for the release job.', type: 'reference' },
+          ],
+        });
+        await finishTurn('t1');
+        await finishTurn('t2');
+        await flush();
+        expect(saved).toHaveLength(0);
+        expect(extractCalls).toHaveLength(1); // nothing left for the checking pass
+      });
+
+      it('the model failing keeps the turns unread: nothing is lost, and the next try reads them', async () => {
+        await setup('as-4');
+        const real = $.model.complete;
+        $.model.complete = (async () => ({ isAnswered: false, reason: 'timeout' })) as never;
+        const first = await emit('command.run', { command: 'jevg', args: 'memory save' }, async () => ({ text: '' }));
+        $.model.complete = real;
+        expect(first.text).toContain('Модель не ответила');
+        const second = await emit('command.run', { command: 'jevg', args: 'memory save' }, async () => ({ text: '' }));
+        expect(second.text).toContain('Сохранено фактов: 1');
+        expect(saved).toHaveLength(1);
+      });
+
+      it('off, or an excluded project: nothing is read', async () => {
+        await setup('as-5', { autoSave: false });
+        await finishTurn('t1');
+        await finishTurn('t2');
+        await flush();
+        expect(extractCalls).toHaveLength(0);
+        const manual = await emit('command.run', { command: 'jevg', args: 'memory save' }, async () => ({ text: '' }));
+        expect(manual.text).toContain('выключено');
+      });
+
+      it('a quiet stretch also saves, once, when fewer turns than the limit were done', async () => {
+        await setup('as-6', { autoSaveEveryTurns: 10 });
+        await finishTurn('t1');
+        await flush(Infinity); // the idle timer fires
+        expect(saved).toHaveLength(1);
+      });
+    });
+
     it('on: a memory server still connecting is waited for, not given up on for the chat', async () => {
       await setMemory({ enabled: true });
       let attempts = 0;
@@ -1285,6 +1415,9 @@ describe('jev-governor hooks against a fake engine', () => {
       expect(mcpCalls).toHaveLength(1);
       expect(ledgerOf('mem-on').find((e) => e.kind === 'memory')).toMatchObject({ applied: true, memory: { action: 'recall', for: 'prompt', ok: true, facts: 1 } });
       expect((await emit('tool.check', { tool: 'mcp__mnema-memory__save_fact', input: {} }, async () => ({ decision: 'ask' }))).decision).toBe('allow');
+      // The mod's own recall passes the same check and is not the model's: allowed.
+      const own = await emit('tool.check', { tool: 'mcp__mnema-memory__recall', input: {} }, async () => ({ decision: 'ask' }), { plugin: 'jev-governor' });
+      expect(own.decision).toBe('allow');
       // The model's own recall is refused (the mod recalled already); its other tools stay.
       const recall = await emit('tool.check', { tool: 'mcp__mnema-memory__recall', input: {} }, async () => ({ decision: 'ask' }));
       expect(recall.decision).toBe('deny');

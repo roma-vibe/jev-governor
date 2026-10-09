@@ -256,6 +256,17 @@ export type GovernorConfig = {
     subagentMinChars: number;
     /** The brief of `/jevg getctx` / `/jevg fresh` is saved as a session summary. */
     saveOnHandoff: boolean;
+    /**
+     * Facts are saved from the dialog without the model being asked: every `autoSaveEveryTurns`
+     * turns and after `autoSaveIdleMinutes` of quiet, `autoSaveModel` reads what the person typed
+     * and what the model answered (not tool output) and gives at most `autoSaveMaxFacts` durable
+     * facts, usually none. Needs a memory that answers; not in excluded projects or shadow mode.
+     */
+    autoSave: boolean;
+    autoSaveModel: string;
+    autoSaveEveryTurns: number;
+    autoSaveIdleMinutes: number;
+    autoSaveMaxFacts: number;
     /** The model may call the memory's tools itself (save_fact, recall, ...); off, those calls are refused. */
     modelTools: boolean;
     /**
@@ -471,11 +482,15 @@ export type LedgerEntry = {
    * call refused, the server started). On a `subagent` entry: the recall its prompt got.
    */
   memory?: {
-    action: 'recall' | 'save' | 'start' | 'refuse';
-    for?: 'prompt' | 'subagent' | 'handoff' | 'model';
+    action: 'recall' | 'save' | 'start' | 'refuse' | 'extract';
+    for?: 'prompt' | 'subagent' | 'handoff' | 'model' | 'turns' | 'idle' | 'manual';
     ok: boolean;
-    /** Facts added to the prompt (recall). */
+    /** Facts added to the prompt (recall) or saved (extract). */
     facts?: number;
+    /** Extract: facts the model offered; the filter or the server's duplicate check dropped the rest. */
+    offered?: number;
+    /** Extract: dialog turns read. */
+    turns?: number;
     /** Characters added to the prompt (recall) or sent (save). */
     chars?: number;
     ms?: number;

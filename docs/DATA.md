@@ -22,6 +22,7 @@ describe/<id>.json          DescribeRequest: command descriptions an open sessio
 outputs/<session>/<id>.txt  full tool outputs that were trimmed (7 days / 200 MB)
 outputs/<session>/pruned/<tool_use_id>.txt   calls a compaction pruned: input + full output (same caps)
 outputs/<session>/folded/<hash>-<chars>.md   old dialog messages a compaction folded: full text
+outputs/<session>/memory-read.json   turns already read for facts (memory.autoSave), so a resumed chat does not read them again
 outputs/<session>/pruned/index.md            one line per pruned call of the chat, newest last (file names relative to it)
 outputs/<session>/pruned/index-<agentId>.md  the same for one subagent
 handoffs/<id>.md            a capsule for a new chat (/jevg getctx, /jevg fresh); kept handoff.keepDays (30)
@@ -229,5 +230,5 @@ into input, output, cache reads and cache writes.
   subagents would have cost on Haiku.
 - `memory` (0.3.5): `enabled` (false), `server` (`mnema-memory`, the MCP server's name), `autoStart` (true),
   `startCommand` (empty: `scripts/mnema-local.sh start`), `recallOnStart` (true), `recallForSubagents` (true),
-  `subagentMinChars` (200), `saveOnHandoff` (true), `modelTools` (true), `modelRecall` (false), `maxChars` (2500), `maxFacts` (12),
+  `subagentMinChars` (200), `saveOnHandoff` (true), `autoSave` (true, 0.3.10), `autoSaveModel` (`claude-sonnet-5-5`), `autoSaveEveryTurns` (6), `autoSaveIdleMinutes` (3), `autoSaveMaxFacts` (3), `modelTools` (true), `modelRecall` (false), `maxChars` (2500), `maxFacts` (12),
   `timeoutMs` (2500). See README, "Long-term memory".

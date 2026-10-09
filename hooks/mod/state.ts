@@ -171,7 +171,24 @@ export const S = {
    * The memory server (`memory.*`): the conversation whose first prompt was given a recall,
    * until when calls are skipped after a failure, when the mod last tried to start the server.
    */
-  memory: { recalledFor: undefined as string | undefined, downUntil: 0, startedAt: 0, lastError: undefined as string | undefined },
+  memory: {
+    recalledFor: undefined as string | undefined,
+    downUntil: 0,
+    startedAt: 0,
+    lastError: undefined as string | undefined,
+    /** Saving from the dialog: one at a time; turns finished since the last reading; when the last one ended. */
+    saving: false,
+    turnsSince: 0,
+    lastTurnAt: 0,
+    saveFailUntil: 0,
+    idleSave: undefined as { cancel: () => void } | undefined,
+    /** Turns already read for facts (keys, newest last), and the summary text already read; saved beside the chat's outputs. */
+    readKeys: [] as string[],
+    readSummary: '',
+    readLoaded: false,
+    /** The session the fields above belong to (a /clear or resume in the same process starts afresh). */
+    readFor: '',
+  },
 };
 
 export type Handoff = {

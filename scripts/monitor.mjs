@@ -379,10 +379,13 @@ function memoryLines(mem) {
   const saves = mem.filter((e) => e.memory?.action === 'save' && e.memory.for === 'handoff');
   const starts = mem.filter((e) => e.memory?.action === 'start');
   const refused = mem.filter((e) => e.memory?.action === 'refuse');
-  const errors = [...new Set(failed.map((e) => e.memory.error).filter(Boolean))].slice(0, 3);
+  const extracts = mem.filter((e) => e.memory?.action === 'extract');
+  const extractOk = extracts.filter((e) => e.memory.ok);
+  const errors = [...new Set([...failed, ...extracts.filter((e) => !e.memory.ok)].map((e) => e.memory.error).filter(Boolean))].slice(0, 3);
   return [
     `Память: recall мода ${recalls.length} (в начале чата ${count(recalls, (e) => e.memory.for === 'prompt')}, для субагентов ${count(recalls, (e) => e.memory.for === 'subagent')}); с фактами ${withFacts.length}, фактов всего ${withFacts.reduce((a, e) => a + e.memory.facts, 0)}, ≈${Math.round(chars / 3.5)} ток. добавлено; медиана ${median} мс; ошибок ${failed.length}.`,
     `Вызовы модели: ${model.length} (из них recall ${modelRecalls.length}${modelRecalls.length > 0 ? ' — шаг поверх всего контекста; мод уже делает recall сам' : ''}); отказано (память выключена): ${refused.length}; бриф переноса сохранён: ${count(saves, (e) => e.memory.ok)}/${saves.length}; запусков сервера: ${starts.length} (неудачных ${count(starts, (e) => !e.memory.ok)}).`,
+    `Автосохранение фактов из диалога: чтений ${extracts.length} (удачных ${extractOk.length}); ходов прочитано ${extractOk.reduce((a, e) => a + (e.memory.turns ?? 0), 0)}; модель предложила ${extractOk.reduce((a, e) => a + (e.memory.offered ?? 0), 0)}, сохранено ${extractOk.reduce((a, e) => a + (e.memory.facts ?? 0), 0)}${extracts.length === 0 ? ' (memory.autoSave в 0.3.10+)' : ''}.`,
     ...errors.map((e) => `- ошибка: ${e}`),
   ];
 }

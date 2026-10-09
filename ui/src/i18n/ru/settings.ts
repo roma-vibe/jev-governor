@@ -430,6 +430,24 @@ export default {
     "Сохранять бриф переноса",
   "The brief /jevg getctx and /jevg fresh write (goal, decisions and why, what is open) is saved to the project memory in the background.":
     "Бриф, который пишут /jevg getctx и /jevg fresh (цель, решения и почему, что открыто), сохраняется в память проекта в фоне.",
+  "Save facts from the dialog":
+    "Сохранять факты из диалога",
+  "The mod reads what you typed and the model answered (never tool output) every few turns and after a quiet stretch, and saves the few durable facts in it: decisions and their reasons, conventions, traps. A second pass drops the doubtful ones; most readings save nothing. Saved facts carry the tag auto. /jevg memory save does it now.":
+    "Мод читает то, что вы писали и что отвечала модель (вывод инструментов не читается), раз в несколько ходов и после паузы, и сохраняет немногие долгие факты: решения и их причины, правила, ловушки. Второй проход отбрасывает сомнительные; чаще всего сохранять нечего. У сохранённых фактов тег auto. /jevg memory save делает это сразу.",
+  "Read the dialog every":
+    "Читать диалог каждые",
+  "Read after a quiet stretch of":
+    "Читать после паузы в",
+  "minutes":
+    "минут",
+  "How many finished turns pass between two readings of the dialog.":
+    "Сколько завершённых ходов проходит между двумя чтениями диалога.",
+  "A reading also runs when you have been away this long (a chat closed sooner loses its last unread turns).":
+    "Чтение запускается и когда вас не было столько времени (чат, закрытый раньше, теряет последние непрочитанные ходы).",
+  "Most readings find nothing worth saving; this only caps a rich one.":
+    "Чаще всего сохранять нечего; предел нужен только для богатого на решения куска.",
+  "Facts per reading at most":
+    "Фактов за одно чтение не больше",
   "Let the model use the memory tools":
     "Модель может пользоваться инструментами памяти",
   "The model may save facts and recall on its own. Each call is a step over the whole context; the notes the mod adds tell it the task is already recalled. Off: its memory calls are refused and the notes carry no ids.":
