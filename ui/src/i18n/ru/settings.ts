@@ -131,9 +131,6 @@ export default {
   'Threshold for picking an existing specialist': 'Порог выбора существующего специалиста',
   'The probability from Jev that a specialist fits the task. A lower threshold means an existing specialist is taken more often, but inexact matches are possible; a higher one means a new one is created more often.':
     'Вероятность от Jev, что специалист подходит к задаче. Ниже порог — чаще берётся имеющийся специалист, но возможны неточные совпадения; выше — чаще создаётся новый.',
-  'Maximum specialists': 'Максимум специалистов',
-  'Auto-creation stops at this number of specialists. 0 means do not create automatically.':
-    'Автосоздание останавливается при таком количестве специалистов. 0 — не создавать автоматически.',
   'Show specialists to Claude': 'Показывать специалистов Claude',
   'Adds the list of specialists to the subagent types available to Claude. This uses context, so it is hidden by default: the mod picks the specialist itself.':
     'Добавляет список специалистов в доступные Claude типы субагентов. Это расходует контекст, поэтому по умолчанию скрыто: мод подбирает специалиста сам.',

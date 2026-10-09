@@ -111,8 +111,6 @@ export type GovernorConfig = {
     remapFrom: string[];
     /** Jev probability for an existing specialist to be chosen. */
     matchAt: number;
-    /** No auto-creation beyond this many agents. */
-    maxAgents: number;
     /** List specialists to the model (costs context); hidden by default. */
     exposeToModel: boolean;
     draftModel: string;
@@ -315,7 +313,7 @@ export type AgentRecord = {
   /** Spawns it ran (since 0.3.2), and the last one. */
   uses?: number;
   lastUsedAt?: string;
-  /** Turned off by the mod to make room in a full registry (`enabled` false). */
+  /** Turned off by an older mod's size cap (`enabled` false); a draft that reuses it turns it back on. */
   retiredAt?: string;
   /** Folded into this specialist as a near-copy of it (`enabled` false): a spawn that picks or redrafts it gets that one. */
   mergedInto?: string;

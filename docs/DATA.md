@@ -11,7 +11,7 @@ every shape is `hooks/lib/types.ts`; validation is `hooks/lib/config.ts`
 config.json                 GovernorConfig — written with defaults on first run
 openrouter.key              default key file (config.jev.keyFile); env OPENROUTER_API_KEY wins
 agents/<name>.json          AgentRecord, one file per specialist subagent (uses, lastUsedAt;
-                            retiredAt when the mod turned it off to make room;
+                            retiredAt when an older mod's size cap turned it off;
                             mergedInto when it was folded into a near-copy, enabled false)
 skills/<name>.json          SkillRecord, one file per skill (mergedInto likewise)
 drafts/<id>.json            DraftRecord: the UI asks, an open Claude Code session drafts
@@ -81,9 +81,8 @@ and `-grader-2`), and Jev's vote then split between them. Now:
   "new" skill under an existing skill's name is that skill.
 - Jev's pick counts when the likeliest specialist reaches `agents.matchAt`, or
   the specialists together do (near-copies split the vote) and `none` is not the pick.
-- A full registry first folds near-copies together (at most every 6 h), then
-  retires its longest-idle auto-drafted specialist; neither helping, the spawn
-  runs without one and the ledger says so once.
+- The registry has no size cap and nothing is turned off for being idle: a
+  specialist drafted once stays available however rarely its kind of task comes.
 - `/jevg agents merge`, or the "Merge near-copies" button (`merge.json`), folds
   them on demand with the draft model. The kept specialist takes the group's
   skills, tools, runs and last run, and may get a wider description; the others
@@ -115,7 +114,7 @@ and `-grader-2`), and Jev's vote then split between them. Now:
   (`compaction.autoWindowTokens`): `autoWindow: { by: mod | user | none, wanted?, tokens?, source? }`;
   `tokens`/`source` are what the engine measures against (`source: env` when the variable took).
 - `agent-created` — a specialist was drafted: `agent`, `reasons` (new skills);
-  with `change: "merged"` (`mergedInto`) or `change: "retired"` it was turned off instead.
+  with `change: "merged"` (`mergedInto`) it was folded instead (`retired`: an older mod's size cap).
 - `trim` — a trimmed tool output: `trim: { tool, command, charsBefore, charsAfter, outcome, jevChunks, path }`.
 - `output-read` — the model opened a saved full output or a pruned call (`text` names the tool and path;
   `archive`: pruned / folded / trim / tool-results / other, since 0.3.4).

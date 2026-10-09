@@ -57,7 +57,6 @@ import {
   PLUGIN,
   rankCandidates,
   resolveAgent,
-  retireCandidate,
   sanitizeAgent,
   sanitizeSkill,
   withRolePreamble,
@@ -650,8 +649,8 @@ async function createAgent(
 }
 
 /**
- * The specialist a drafter's `reuse` names: itself or what it was merged into. One the mod
- * retired comes back on (it is needed again); one turned off by hand stays off and none is used.
+ * The specialist a drafter's `reuse` names: itself or what it was merged into. One retired by
+ * an older mod's size cap comes back on (it is needed again); one turned off by hand stays off.
  */
 async function reviveAgent($: EngineInterface, name: string): Promise<AgentRecord | undefined> {
   const live = resolveAgent(S.agents, name);
@@ -783,15 +782,12 @@ async function planSpawn(
   };
 }
 
-/** Days without a run before a full registry may turn an auto-drafted specialist off. */
-const RETIRE_IDLE_DAYS = 14;
-
 /**
  * Drafts a specialist for a spawn no existing one fits, one draft at a time. Parallel spawns
  * of one task otherwise drafted near-copies (`judge-packet-v2-grader` and `-grader-2` four
  * seconds apart): a spawn that waited first asks Jev whether a specialist drafted meanwhile
- * (here or in another session) fits, and a new draft sees every earlier one. A full registry
- * first folds its near-copies together, then turns off its longest-idle auto-drafted specialist.
+ * (here or in another session) fits, and a new draft sees every earlier one. The registry
+ * has no size cap: near-copies are kept out here, and `/jevg agents merge` folds old ones.
  */
 async function draftOrReuse(
   $: EngineInterface,
@@ -817,7 +813,6 @@ async function draftOrReuse(
       const reuse = picked ? resolveAgent(S.agents, picked) : undefined;
       if (reuse) return { agent: reuse, created: false };
     }
-    if (!(await makeRoom($))) return { created: false };
     const made = await createAgent($, { title: e.description, task: e.prompt }).catch(async (error) => {
       await ledger($, { kind: 'error', error: `create agent: ${errorText(error)}` });
       return { agent: undefined, created: false };
@@ -827,38 +822,6 @@ async function draftOrReuse(
   } finally {
     release();
   }
-}
-
-/** Auto-merging at most this often: it costs a draft-model call over the whole registry. */
-const AUTO_MERGE_EVERY_MS = 6 * 3_600_000;
-
-/**
- * Room for one more specialist: a full registry folds its near-copies together (at most every
- * few hours), then turns off its longest-idle auto-drafted specialist. False when neither helps.
- */
-async function makeRoom($: EngineInterface): Promise<boolean> {
-  const enabled = () => [...S.agents.values()].filter((a) => a.enabled);
-  if (enabled().length < S.cfg.agents.maxAgents) return true;
-  if (Date.now() - S.mergedAt >= AUTO_MERGE_EVERY_MS) {
-    S.mergedAt = Date.now();
-    await mergeOnce($, 'registry full').catch(async (error) => {
-      await ledger($, { kind: 'error', error: `merge agents: ${errorText(error)}` });
-    });
-    if (enabled().length < S.cfg.agents.maxAgents) return true;
-  }
-  const old = retireCandidate(enabled(), Date.now(), RETIRE_IDLE_DAYS);
-  if (old) {
-    await retireAgent($, old);
-    return true;
-  }
-  if (!S.fullNoted) {
-    S.fullNoted = true;
-    await ledger($, {
-      kind: 'error',
-      error: `registry full: ${enabled().length} of ${S.cfg.agents.maxAgents} specialists, none idle ${RETIRE_IDLE_DAYS} days; no new specialist is drafted (/jevg agents merge, or raise agents.maxAgents)`,
-    });
-  }
-  return false;
 }
 
 /**
@@ -906,33 +869,13 @@ async function mergeAgents(
       await ledger($, { kind: 'agent-created', change: 'merged', agent: name, mergedInto: g.keep, text: `merged into ${g.keep} (${why})` });
     }
   }
-  if (plan.agents.length > 0) S.fullNoted = false;
   return {
     agents: plan.agents.map((g) => ({ keep: g.keep, merged: g.merge })),
     skills: plan.skills.map((g) => ({ keep: g.keep, merged: g.merge })),
   };
 }
 
-async function retireAgent($: EngineInterface, agent: AgentRecord): Promise<void> {
-  const now = nowIso();
-  const off: AgentRecord = { ...agent, enabled: false, retiredAt: now, updatedAt: now };
-  try {
-    await $.fs.write(`${S.data}/agents/${agent.name}.json`, `${JSON.stringify(off, null, 2)}\n`);
-    S.agents.set(agent.name, off);
-    S.registrySig = await registrySignature($);
-    await ledger($, {
-      kind: 'agent-created',
-      change: 'retired',
-      agent: agent.name,
-      text: `retired: registry full (${S.cfg.agents.maxAgents})`,
-      reasons: [`uses ${agent.uses ?? 0}, last ${(agent.lastUsedAt ?? agent.createdAt).slice(0, 10)}`],
-    });
-  } catch (error) {
-    await ledger($, { kind: 'error', error: `retire ${agent.name}: ${errorText(error)}` });
-  }
-}
-
-/** Counts a spawn the specialist ran (what a full registry retires by). */
+/** Counts a spawn the specialist ran (shown by the UI and `/jevg agents`). */
 async function noteUse($: EngineInterface, agent: AgentRecord): Promise<void> {
   const current = S.agents.get(agent.name) ?? agent;
   const used: AgentRecord = { ...current, uses: (current.uses ?? 0) + 1, lastUsedAt: nowIso() };
@@ -2019,9 +1962,9 @@ function registryLine(): string {
   const off = all.length - on - merged - retired;
   const skills = [...S.skills.values()].filter((s) => s.mergedInto === undefined).length;
   return L(
-    `Специалисты: ${on} из ${S.cfg.agents.maxAgents} включены` +
+    `Специалисты: ${on} включены` +
       `${merged ? `, ${merged} слиты` : ''}${retired ? `, ${retired} выведены` : ''}${off ? `, ${off} выключены вручную` : ''}; навыков ${skills}.`,
-    `Specialists: ${on} of ${S.cfg.agents.maxAgents} on` +
+    `Specialists: ${on} on` +
       `${merged ? `, ${merged} merged` : ''}${retired ? `, ${retired} retired` : ''}${off ? `, ${off} off by hand` : ''}; skills ${skills}.`,
   );
 }
@@ -2034,7 +1977,7 @@ function mergeText(done: NonNullable<Awaited<ReturnType<typeof mergeAgents>>>): 
   ].join('\n');
 }
 
-/** Runs one merge at a time: the command, the UI's request and a full registry share it. */
+/** Runs one merge at a time: the command and the UI's request share it. */
 async function mergeOnce($: EngineInterface, why: string): Promise<Awaited<ReturnType<typeof mergeAgents>> | 'busy'> {
   if (S.mergeBusy) return 'busy';
   S.mergeBusy = true;
@@ -2084,7 +2027,7 @@ async function processMerge($: EngineInterface): Promise<void> {
   if (claimed?.worker !== S.session) return;
   const done = await mergeOnce($, 'UI').catch((error: unknown) => errorText(error));
   if (done === 'busy') {
-    // A full registry is merging right now: the request waits for the next pass.
+    // A merge is running in this session right now: the request waits for the next pass.
     await $.fs.write(path, `${JSON.stringify({ ...request, status: 'pending', updatedAt: nowIso() }, null, 2)}\n`);
     return;
   }

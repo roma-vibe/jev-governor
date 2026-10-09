@@ -296,19 +296,3 @@ describe('mod version', () => {
     }
   });
 });
-
-describe('retiring specialists', () => {
-  it('picks the least used, longest idle auto-drafted one past the idle days', async () => {
-    const { retireCandidate } = await import('../hooks/lib/registry.ts');
-    const base: Omit<AgentRecord, 'name'> = { description: 'd', prompt: 'p', skills: [], tier: 'auto', effort: 'auto', enabled: true, origin: 'auto', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' };
-    const now = Date.parse('2026-10-07T00:00:00Z');
-    const agents: AgentRecord[] = [
-      { ...base, name: 'busy', uses: 9, lastUsedAt: '2026-09-01T00:00:00Z' },
-      { ...base, name: 'idle', uses: 1, lastUsedAt: '2026-08-01T00:00:00Z' },
-      { ...base, name: 'recent', uses: 0, lastUsedAt: '2026-10-06T00:00:00Z' },
-      { ...base, name: 'mine', origin: 'manual' },
-    ];
-    expect(retireCandidate(agents, now, 14)?.name).toBe('idle');
-    expect(retireCandidate(agents.filter((a) => a.name === 'recent'), now, 14)).toBeUndefined();
-  });
-});

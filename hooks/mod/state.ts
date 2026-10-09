@@ -127,11 +127,7 @@ export const S = {
   describeBusy: false,
   /** Drafting a specialist, one at a time: parallel spawns wait and may reuse what was just drafted. */
   draftLock: Promise.resolve() as Promise<void>,
-  /** When the mod last folded near-copy specialists together on its own (a full registry tries it first). */
-  mergedAt: 0,
   mergeBusy: false,
-  /** A full registry with nothing to retire was logged (once per process). */
-  fullNoted: false,
   /** tool_use_id → the call, so a result row knows its tool and command. */
   /** Tool calls by id; `persisted` is where Claude Code saved a Bash output too big to inline. */
   calls: new Map<string, { tool: string; command?: string; agentId?: string; persisted?: string }>(),

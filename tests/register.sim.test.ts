@@ -8,7 +8,6 @@ import { describe, expect, it } from 'vitest';
 
 import { resolveConfig } from '../hooks/lib/config.ts';
 import { MOD_VERSION } from '../hooks/lib/version.ts';
-import { S } from '../hooks/mod/state.ts';
 import { register } from '../hooks/register.ts';
 
 type Handler = (...args: any[]) => any;
@@ -1064,7 +1063,7 @@ describe('jev-governor hooks against a fake engine', () => {
     }
   });
 
-  it('parallel spawns of one task share one drafted specialist; uses are counted; a full registry retires an idle one', async () => {
+  it('parallel spawns of one task share one drafted specialist; uses are counted; no size cap turns old ones off', async () => {
     await startSession('spawn-session');
     const spawn = (description: string, agentId: string) =>
       emit(
@@ -1083,30 +1082,27 @@ describe('jev-governor hooks against a fake engine', () => {
     expect(ledger.filter((e) => e.kind === 'agent-created')).toHaveLength(1);
     expect(ledger.every((e) => e.v === MOD_VERSION)).toBe(true);
 
-    // Full registry: the long-idle specialist is turned off to make room for the new draft.
-    const config = JSON.parse(files.get(`${DATA}/config.json`)!);
-    const keptAgents = { ...config.agents };
-    config.agents.maxAgents = 2;
-    files.set(`${DATA}/config.json`, JSON.stringify(config));
+    // Many specialists, one long idle: a new one is drafted beside them, nothing is turned off or merged.
     const grader = JSON.parse(files.get(`${DATA}/agents/packet-grader.json`)!);
     files.set(`${DATA}/agents/old-idle.json`, JSON.stringify({ ...grader, name: 'old-idle', description: 'Formats changelogs.', uses: 0, lastUsedAt: '2026-01-01T00:00:00.000Z' }));
+    for (let i = 0; i < 45; i++) files.set(`${DATA}/agents/filler-${i}.json`, JSON.stringify({ ...grader, name: `filler-${i}`, description: `Filler ${i}.` }));
     jevAgentPick = undefined;
     draftName = 'deploy-checker';
     merges = 0;
-    await startSession('spawn-session');
-    await spawn('Check the deploy', 'sub-c');
-    // The merge is tried first; with no near-copies the idle one goes.
-    expect(merges).toBe(1);
-    expect(drafts).toBe(2);
-    expect(JSON.parse(files.get(`${DATA}/agents/old-idle.json`)!).enabled).toBe(false);
-    expect(JSON.parse(files.get(`${DATA}/agents/packet-grader.json`)!).enabled).toBe(true);
-    expect(JSON.parse(files.get(`${DATA}/agents/deploy-checker.json`)!).enabled).toBe(true);
-    config.agents = keptAgents;
-    files.set(`${DATA}/config.json`, JSON.stringify(config));
-    draftName = 'packet-grader';
+    try {
+      await startSession('spawn-session');
+      await spawn('Check the deploy', 'sub-c');
+      expect(merges).toBe(0);
+      expect(drafts).toBe(2);
+      expect(JSON.parse(files.get(`${DATA}/agents/old-idle.json`)!).enabled).toBe(true);
+      expect(JSON.parse(files.get(`${DATA}/agents/deploy-checker.json`)!).enabled).toBe(true);
+    } finally {
+      for (let i = 0; i < 45; i++) files.delete(`${DATA}/agents/filler-${i}.json`);
+      draftName = 'packet-grader';
+    }
   });
 
-  it('a full registry folds its near-copies first; a drafter that names an existing specialist reuses it; /jevg agents merge', async () => {
+  it('/jevg agents merge folds near-copies; a drafter that names an existing specialist reuses it', async () => {
     await startSession('merge-session');
     const spawn = (description: string, agentId: string) =>
       emit(
@@ -1114,55 +1110,44 @@ describe('jev-governor hooks against a fake engine', () => {
         { subagentType: 'general-purpose', description, prompt: `${description}: grade packet /tmp/p.md into /tmp/out.json`, parentModel: 'claude-opus-5-5' },
         async (x: { prompt: string }) => ({ agentId, model: 'claude-opus-5-5', prompt: x.prompt }),
       );
-    const config = JSON.parse(files.get(`${DATA}/config.json`)!);
-    const keptAgents = { ...config.agents };
     for (const name of [...files.keys()].filter((p) => p.startsWith(`${DATA}/agents/`))) files.delete(name);
     const base = { prompt: 'You grade packets.', skills: [], tier: 'auto', effort: 'auto', enabled: true, origin: 'auto', uses: 1, lastUsedAt: new Date().toISOString(), createdAt: '2026-10-07T00:00:00Z', updatedAt: '2026-10-07T00:00:00Z' };
     for (const name of ['packet-judge', 'packet-judge-2', 'release-notes-writer']) {
       files.set(`${DATA}/agents/${name}.json`, JSON.stringify({ ...base, name, description: name.startsWith('packet') ? 'Judges packets.' : 'Writes release notes.' }));
     }
-    config.agents.maxAgents = 3;
-    files.set(`${DATA}/config.json`, JSON.stringify(config));
     try {
-      // Nothing fits, nothing is idle: the near-copies are folded and the new one is drafted.
+      // On demand: the near-copies are folded, the kept one takes the runs.
       mergeReply = JSON.stringify({ agents: [{ keep: 'packet-judge', merge: ['packet-judge-2'] }], skills: [] });
       merges = 0;
       drafts = 0;
       jevAgentPick = undefined;
-      draftName = 'deploy-checker';
-      S.mergedAt = 0; // the earlier test's merge would hold this one off for hours
       await startSession('merge-session');
-      await spawn('Check the deploy', 'm-1');
+      const merged = await emit('command.run', { command: 'jevg', args: 'agents merge' });
       expect(merges).toBe(1);
+      expect(merged.text).toContain('packet-judge ← packet-judge-2');
       expect(JSON.parse(files.get(`${DATA}/agents/packet-judge-2.json`)!)).toMatchObject({ enabled: false, mergedInto: 'packet-judge' });
       expect(JSON.parse(files.get(`${DATA}/agents/packet-judge.json`)!)).toMatchObject({ enabled: true, uses: 2 });
-      expect(JSON.parse(files.get(`${DATA}/agents/deploy-checker.json`)!).enabled).toBe(true);
       const ledger = [...files.entries()].filter(([p]) => p.endsWith('merge-session.jsonl')).flatMap(([, t]) => t.split('\n').filter(Boolean).map((l) => JSON.parse(l)));
       expect(ledger.find((e) => e.change === 'merged')).toMatchObject({ kind: 'agent-created', agent: 'packet-judge-2', mergedInto: 'packet-judge' });
 
       // The drafter says an existing one fits: no new file, that one runs (a merged name leads to what it went into).
-      config.agents.maxAgents = 40;
-      files.set(`${DATA}/config.json`, JSON.stringify(config));
       draftReply = '{"reuse": "packet-judge-2"}';
-      await startSession('merge-session');
       const before = [...files.keys()].filter((p) => p.startsWith(`${DATA}/agents/`)).length;
       const result = await spawn('Grade the v3 packet', 'm-2');
-      expect(drafts).toBe(2);
+      expect(drafts).toBe(1);
       expect([...files.keys()].filter((p) => p.startsWith(`${DATA}/agents/`)).length).toBe(before);
       expect(result.prompt.startsWith('<role>\nYou grade packets.')).toBe(true);
       const last = [...files.entries()].filter(([p]) => p.endsWith('merge-session.jsonl')).flatMap(([, t]) => t.split('\n').filter(Boolean).map((l) => JSON.parse(l))).filter((e) => e.kind === 'subagent').at(-1);
       expect(last).toMatchObject({ agent: 'packet-judge', created: false });
       expect(JSON.parse(files.get(`${DATA}/agents/packet-judge.json`)!).uses).toBe(3);
 
-      // The command: status, and a merge on demand.
+      // The command: status, and a merge that finds nothing.
       mergeReply = '{"agents": [], "skills": []}';
       const status = await emit('command.run', { command: 'jevg', args: 'agents' });
-      expect(status.text).toMatch(/3 из 40 включены, 1 слиты|3 of 40 on, 1 merged/);
-      const merged = await emit('command.run', { command: 'jevg', args: 'agents merge' });
-      expect(merged.text).toMatch(/Похожих специалистов не нашлось|No near-copies found/);
+      expect(status.text).toMatch(/2 включены, 1 слиты|2 on, 1 merged/);
+      const again = await emit('command.run', { command: 'jevg', args: 'agents merge' });
+      expect(again.text).toMatch(/Похожих специалистов не нашлось|No near-copies found/);
     } finally {
-      config.agents = keptAgents;
-      files.set(`${DATA}/config.json`, JSON.stringify(config));
       draftReply = undefined;
       draftName = 'packet-grader';
       mergeReply = '{"agents": [], "skills": []}';

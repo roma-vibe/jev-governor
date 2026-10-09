@@ -335,15 +335,6 @@ export function getSections(): Section[] {
           help: t('The probability from Jev that a specialist fits the task. A lower threshold means an existing specialist is taken more often, but inexact matches are possible; a higher one means a new one is created more often.'),
         },
         {
-          path: 'agents.maxAgents',
-          label: t('Maximum specialists'),
-          kind: 'number',
-          step: 1,
-          min: 0,
-          max: 500,
-          help: t('Auto-creation stops at this number of specialists. 0 means do not create automatically.'),
-        },
-        {
           path: 'agents.exposeToModel',
           label: t('Show specialists to Claude'),
           kind: 'bool',
