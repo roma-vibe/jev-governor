@@ -62,6 +62,7 @@ export default {
     'Если контекст больше, диалог не переводится на Sonnet: на длинном контексте Opus надёжнее, а смена модели дорога.',
   'Cache lifetime': 'Время жизни кэша',
   'min': 'мин',
+  'h': 'ч',
   'After this many idle minutes the prompt cache counts as cold, and switching models costs nothing. Do not set it higher than the real cache lifetime of your subscription: the mod would treat the cache as warm when it has already gone cold, or the other way round.':
     'Через столько минут простоя кэш промпта считается остывшим, и смена модели ничего не стоит. Не ставьте больше реального времени жизни кэша вашей подписки: мод будет считать кэш тёплым, когда он уже остыл, или наоборот.',
   'Minimum effort': 'Минимальный effort',
@@ -131,6 +132,9 @@ export default {
   'Threshold for picking an existing specialist': 'Порог выбора существующего специалиста',
   'The probability from Jev that a specialist fits the task. A lower threshold means an existing specialist is taken more often, but inexact matches are possible; a higher one means a new one is created more often.':
     'Вероятность от Jev, что специалист подходит к задаче. Ниже порог — чаще берётся имеющийся специалист, но возможны неточные совпадения; выше — чаще создаётся новый.',
+  'Background merge of near-copies': 'Фоновое слияние дублей',
+  'How often an open session folds near-copy specialists together with the author model. It runs only when a specialist was created since the last pass. 0 means only by hand (the “Merge near-copies” button or /jevg agents merge).':
+    'Как часто открытая сессия сливает почти одинаковых специалистов с помощью модели-автора. Запускается, только если с прошлого раза появился новый специалист. 0 — только вручную (кнопка «Слить дубли» или /jevg agents merge).',
   'Show specialists to Claude': 'Показывать специалистов Claude',
   'Adds the list of specialists to the subagent types available to Claude. This uses context, so it is hidden by default: the mod picks the specialist itself.':
     'Добавляет список специалистов в доступные Claude типы субагентов. Это расходует контекст, поэтому по умолчанию скрыто: мод подбирает специалиста сам.',

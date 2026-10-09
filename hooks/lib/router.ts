@@ -212,9 +212,14 @@ export function chooseEffort(
   return clampEffort(index, config);
 }
 
-/** Escalates an effort by `steps` levels, within the configured bounds. */
-export function escalate(effort: Effort, steps: number, config: GovernorConfig): Effort {
-  return clampEffort(effortIndex(effort) + steps, config);
+/**
+ * Escalates an effort by `steps` levels, within the configured bounds. Under budget pressure it
+ * stops at that pressure's cap (never below the chosen effort): a 2500-step subagent capped at
+ * `high` otherwise ran most of its steps at `max` after a few failed tests.
+ */
+export function escalate(effort: Effort, steps: number, config: GovernorConfig, pressure: Pressure = 0): Effort {
+  const ceiling = Math.max(effortIndex(effort), effortIndex(EFFORT_CAP[pressure] ?? 'max'));
+  return clampEffort(Math.min(effortIndex(effort) + steps, ceiling), config);
 }
 
 export type Decision = {

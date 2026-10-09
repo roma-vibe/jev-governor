@@ -1278,6 +1278,7 @@ async function archivePruned(
   original: readonly Message[],
   compacted: readonly Message[],
   pruned: readonly PrunedCall[],
+  agentId?: string,
 ): Promise<{ messages: Message[]; archived: number }> {
   if (pruned.length === 0) return { messages: [...compacted], archived: 0 };
   const dir = `${outputsDir()}/pruned`;
@@ -1305,7 +1306,9 @@ async function archivePruned(
   const removed = saved.filter((call) => call.action === 'drop_call').length;
   // A stub truncated again is already listed; one now removed whole gets its line.
   const listed = saved.filter((call) => !(call.action === 'drop_result' && isPointerText(call.result)));
-  const indexPath = `${dir}/index.md`;
+  // Each subagent keeps its own index: one shared with the chat and every other subagent grew to
+  // megabytes in a long fan-out chat, and a subagent searching it read mostly other agents' calls.
+  const indexPath = agentId === undefined ? `${dir}/index.md` : `${dir}/index-${agentId.replace(/[^A-Za-z0-9_-]/g, '_')}.md`;
   let index: { path: string; removed: number } | undefined;
   if (listed.length > 0) {
     let existing = '# Tool calls pruned from this session (newest last)\n';
@@ -2038,6 +2041,34 @@ async function processMerge($: EngineInterface): Promise<void> {
   await $.fs.write(path, `${JSON.stringify(result, null, 2)}\n`);
 }
 
+/**
+ * The background merge: at most every `agents.autoMergeHours`, and only when a specialist was
+ * drafted since the last pass (the draft keeps near-copies out, so most passes find nothing and
+ * none is asked for). One session does it: `merge-auto.json` is claimed like a UI request.
+ */
+async function autoMerge($: EngineInterface): Promise<void> {
+  const hours = S.cfg.agents.autoMergeHours;
+  if (!active() || shadow() || !S.cfg.agents.enabled || hours <= 0 || S.mergeBusy) return;
+  const now = Date.now();
+  if (now - S.autoMergeCheckedAt < 10 * 60_000) return;
+  S.autoMergeCheckedAt = now;
+  const path = `${S.data}/merge-auto.json`;
+  const last = (await readJson($, path)) as { at?: string; worker?: string } | undefined;
+  const lastAt = Date.parse(last?.at ?? '') || 0;
+  if (now - lastAt < hours * 3_600_000) return;
+  if (await loadRegistry($)) await registerAll($);
+  const on = [...S.agents.values()].filter((a) => a.enabled);
+  if (on.length < 2 || !on.some((a) => (Date.parse(a.createdAt) || 0) > lastAt)) return;
+  await $.fs.write(path, `${JSON.stringify({ at: nowIso(), worker: S.session, status: 'working' }, null, 2)}\n`);
+  await $.clock.sleep(400);
+  if (((await readJson($, path)) as { worker?: string } | undefined)?.worker !== S.session) return;
+  const done = await mergeOnce($, 'auto').catch((error: unknown) => errorText(error));
+  if (done === 'busy') return;
+  const result = done && typeof done === 'object' ? { status: 'done', result: done } : { status: 'error', error: typeof done === 'string' ? done : 'see the journal' };
+  // A failed pass is tried again next time the interval passes, not every 10 minutes.
+  await $.fs.write(path, `${JSON.stringify({ at: nowIso(), worker: S.session, ...result }, null, 2)}\n`);
+}
+
 async function memoryCommand($: EngineInterface, arg: string): Promise<string> {
   await loadConfig($, true);
   if (arg === 'on' || arg === 'off') {
@@ -2229,6 +2260,7 @@ async function bindSession($: EngineInterface, starting: boolean): Promise<void>
     $.clock.every(8000, () => {
       void processDrafts($)
         .then(() => processMerge($))
+        .then(() => autoMerge($))
         .then(() => processDescribe($))
         .catch(() => undefined);
     });
@@ -2405,10 +2437,10 @@ export const register: Register = (on) => {
           model: S.cfg.models.standard,
           reasons: [steps > 0 ? 'light subagent: tool errors, moved to the standard model' : `light subagent: ${sub.steps} steps, moved to the standard model`],
         });
-        return yield* counted({ ...e, model: S.cfg.models.standard, effort: escalate(sub.effort, Math.min(2, steps), S.cfg) });
+        return yield* counted({ ...e, model: S.cfg.models.standard, effort: escalate(sub.effort, Math.min(2, steps), S.cfg, sub.pressure) });
       }
       if (steps > 0) sub.escalated = Math.max(sub.escalated ?? 0, Math.min(2, steps));
-      return yield* counted({ ...e, ...(sub.model ? { model: sub.model } : {}), effort: escalate(sub.effort, Math.min(2, steps), S.cfg) });
+      return yield* counted({ ...e, ...(sub.model ? { model: sub.model } : {}), effort: escalate(sub.effort, Math.min(2, steps), S.cfg, sub.pressure) });
     }
 
     const turn = S.turn;
@@ -2434,7 +2466,7 @@ export const register: Register = (on) => {
       S.cfg.router.mainModel && tierOf(e.model, S.cfg) !== decision.tier ? S.cfg.models[decision.tier] : e.model;
     const steps = S.cfg.router.escalateAfterErrors > 0 ? Math.floor(turn.errors / S.cfg.router.escalateAfterErrors) : 0;
     const effort =
-      S.cfg.router.mainEffort && !decision.keepEffort ? escalate(decision.effort, Math.min(2, steps), S.cfg) : undefined;
+      S.cfg.router.mainEffort && !decision.keepEffort ? escalate(decision.effort, Math.min(2, steps), S.cfg, outcome.pressure) : undefined;
     if (effort && steps > 0) turn.escalated = Math.max(turn.escalated ?? 0, Math.min(2, steps));
     const prevModel = S.route.lastModel;
     S.route.lastModel = applied ? model : e.model;
@@ -2626,6 +2658,7 @@ export const register: Register = (on) => {
           agent: plan.agent?.name,
           errors: 0,
           steps: 0,
+          pressure: plan.pressure,
           baseModel: e.model ?? e.parentModel,
           task: clip(e.prompt, 1500, 300),
         }
@@ -2966,7 +2999,7 @@ export const register: Register = (on) => {
         }
         if (k.archive) {
           try {
-            ({ messages: kept, archived } = await archivePruned($, e.messages, messages, pruned));
+            ({ messages: kept, archived } = await archivePruned($, e.messages, messages, pruned, e.agentId));
           } catch (error) {
             await ledger($, { kind: 'error', error: `archive: ${errorText(error)}` });
           }

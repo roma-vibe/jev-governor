@@ -115,6 +115,8 @@ export type GovernorConfig = {
     exposeToModel: boolean;
     draftModel: string;
     draftTimeoutMs: number;
+    /** Fold near-copy specialists in the background at most this often (hours); 0 is off. Runs only when a specialist was drafted since the last pass. */
+    autoMergeHours: number;
     /** Ask every subagent to keep each wait under 4 minutes: its prompt cache lives 5 (WAIT_NOTE). */
     waitHint: boolean;
   };

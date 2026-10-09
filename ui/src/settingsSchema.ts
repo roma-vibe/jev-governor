@@ -358,6 +358,16 @@ export function getSections(): Section[] {
           help: t('How long to wait for a specialist draft. After that the launch goes ahead as an ordinary subagent.'),
         },
         {
+          path: 'agents.autoMergeHours',
+          label: t('Background merge of near-copies'),
+          kind: 'number',
+          step: 1,
+          min: 0,
+          max: 720,
+          unit: t('h'),
+          help: t('How often an open session folds near-copy specialists together with the author model. It runs only when a specialist was created since the last pass. 0 means only by hand (the “Merge near-copies” button or /jevg agents merge).'),
+        },
+        {
           path: 'agents.waitHint',
           label: t('Short waits in subagents'),
           kind: 'bool',

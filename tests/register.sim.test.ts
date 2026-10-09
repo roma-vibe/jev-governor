@@ -43,6 +43,8 @@ let clipboard = '';
 let sessionId = 'old-session';
 let messages: unknown[] = [];
 const timers: (() => void)[] = [];
+/** The mod's 8-second ticks (drafts, merges): a test runs the last one by hand. */
+const ticks: (() => void)[] = [];
 const store = new Map<string, unknown>();
 const submitted: { text: string; asUser?: boolean }[] = [];
 const commandsRun: string[] = [];
@@ -167,7 +169,10 @@ const $ = {
       timers.push(fn);
       return { cancel: () => void timers.splice(timers.indexOf(fn), 1) };
     },
-    every: () => ({ cancel: () => undefined }),
+    every: (_ms: number, fn: () => void) => {
+      ticks.push(fn);
+      return { cancel: () => undefined };
+    },
     // A real wait: a timeout must not beat Jev's (immediate) answer.
     sleep: () => new Promise<void>((resolve) => void macrotask(resolve)),
   },
@@ -461,6 +466,9 @@ describe('jev-governor hooks against a fake engine', () => {
     expect(compact.compaction.reason).toBe('window');
     expect(compact.agentId).toBe('sub-w');
     expect(compact.scope).toBe('subagent');
+    // The subagent's pruned calls are listed in its own index, not the chat's.
+    expect(files.get(`${DATA}/outputs/window-session/pruned/index-sub-w.md`)).toContain('Bash(npm test)');
+    expect(files.has(`${DATA}/outputs/window-session/pruned/index.md`)).toBe(false);
 
     // A value you set yourself is never overwritten, and 0 in the config leaves it alone too.
     env.set('CLAUDE_CODE_AUTO_COMPACT_WINDOW', '400000');
@@ -1099,6 +1107,29 @@ describe('jev-governor hooks against a fake engine', () => {
     } finally {
       for (let i = 0; i < 45; i++) files.delete(`${DATA}/agents/filler-${i}.json`);
       draftName = 'packet-grader';
+    }
+  });
+
+  it('a background merge runs when a specialist was drafted since the last pass, once per interval', async () => {
+    for (const name of [...files.keys()].filter((p) => p.startsWith(`${DATA}/agents/`))) files.delete(name);
+    files.delete(`${DATA}/merge-auto.json`);
+    const base = { prompt: 'You grade packets.', skills: [], tier: 'auto', effort: 'auto', enabled: true, origin: 'auto', uses: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    for (const name of ['grader-a', 'grader-b']) files.set(`${DATA}/agents/${name}.json`, JSON.stringify({ ...base, name, description: 'Grades packets.' }));
+    mergeReply = JSON.stringify({ agents: [{ keep: 'grader-a', merge: ['grader-b'] }], skills: [] });
+    merges = 0;
+    try {
+      await startSession('auto-merge');
+      ticks.at(-1)!();
+      await until(() => JSON.parse(files.get(`${DATA}/merge-auto.json`) ?? '{}').status === 'done');
+      expect(merges).toBe(1);
+      expect(JSON.parse(files.get(`${DATA}/agents/grader-b.json`)!)).toMatchObject({ enabled: false, mergedInto: 'grader-a' });
+      expect(JSON.parse(files.get(`${DATA}/merge-auto.json`)!).result.agents).toEqual([{ keep: 'grader-a', merged: ['grader-b'] }]);
+      // The next tick: the interval has not passed, the model is not asked.
+      ticks.at(-1)!();
+      await until(() => false);
+      expect(merges).toBe(1);
+    } finally {
+      mergeReply = '{"agents": [], "skills": []}';
     }
   });
 

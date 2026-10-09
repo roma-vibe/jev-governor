@@ -51,6 +51,7 @@ export const DEFAULT_CONFIG: GovernorConfig = {
     exposeToModel: false,
     draftModel: 'claude-sonnet-5-5',
     draftTimeoutMs: 30_000,
+    autoMergeHours: 24,
     waitHint: true,
   },
   compaction: {
@@ -248,6 +249,7 @@ export function resolveConfig(raw: unknown): GovernorConfig {
       exposeToModel: bool(a.exposeToModel, d.agents.exposeToModel),
       draftModel: str(a.draftModel, d.agents.draftModel),
       draftTimeoutMs: num(a.draftTimeoutMs, d.agents.draftTimeoutMs, 5_000, 120_000),
+      autoMergeHours: num(a.autoMergeHours, d.agents.autoMergeHours, 0, 24 * 30),
       waitHint: bool(a.waitHint, d.agents.waitHint),
     },
     compaction: {

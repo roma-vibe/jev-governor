@@ -472,7 +472,12 @@ async function main() {
   const reads = by('output-read');
   // `archive` since 0.3.4; before it the text, where `D=…/pruned; cat $D/x` has no slash after the folder.
   const readOf = (e) => e.archive ?? (/\/pruned\b/.test(e.text ?? '') ? 'pruned' : /\/folded\b/.test(e.text ?? '') ? 'folded' : /\/tool-results\//.test(e.text ?? '') ? 'tool-results' : 'other');
-  const pruneReads = reads.filter((e) => readOf(e) === 'pruned');
+  // Reads are set against the compactions of the same scope: subagents compact apart (their reads
+  // over the chat's compactions read as 15 per compaction in a fan-out chat).
+  const isSub = (e) => e.agentId !== undefined || e.scope === 'subagent';
+  const allPruneReads = reads.filter((e) => readOf(e) === 'pruned');
+  const pruneReads = allPruneReads.filter((e) => !isSub(e));
+  const subPruneReads = allPruneReads.filter(isSub);
   const foldReads = reads.filter((e) => readOf(e) === 'folded');
   // Claude Code's own saved outputs: read back by the model, not removed by the mod, so not in the ratio.
   const toolResultReads = reads.filter((e) => readOf(e) === 'tool-results');
@@ -496,7 +501,7 @@ async function main() {
       `Прочитано из архива (по транскриптам): ${k(resultChars.pruned)} символов — ${pct(resultChars.pruned, resultChars.all)} всех результатов инструментов основного диалога.`,
       `Сворачивание старого диалога: сжатий с кандидатами ${folds.length}, кандидатов ${folds.reduce((a, f) => a + f.candidates, 0)}, свёрнуто ${folds.reduce((a, f) => a + f.folded, 0)} (${k(folds.reduce((a, f) => a + f.chars, 0))} символов); чтений свёрнутого ${foldReads.length} (${k(resultChars.folded)} символов).${keeps.length ? ` Оценки Jev «оставить» (${keeps.length}, с 0.3.4): медиана ${median(keeps.map((x) => x.keep)).toFixed(2)}; ответов ниже порога 0.3: ${keeps.filter((x) => x.kind === 'answer' && x.keep < 0.3).length} из ${keeps.filter((x) => x.kind === 'answer').length}.` : ''}`,
       `Запуск нашего сжатия через \`/compact\` (приложение): ${viaCommand}; ошибок запуска по таймеру или порогу: ${idleErrors.length}.`,
-      `Не в счёте выше: сжатий в субагентах ${subCompacts}, заранее посчитанных (precompute) ${precomputes}.`,
+      `Не в счёте выше: сжатий в субагентах ${subCompacts} (чтений их архива ${subPruneReads.length}${subCompacts ? ` → ${(subPruneReads.length / subCompacts).toFixed(2)} на сжатие` : ''}), заранее посчитанных (precompute) ${precomputes}.`,
       ...reruns.slice(-5).map((e) => `- повтор: ${e.text}`),
     ]),
   );

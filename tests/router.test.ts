@@ -156,6 +156,11 @@ describe('effort', () => {
     expect(chooseEffort(signals({ effortExpected: 4 }), 0, bounded, [])).toBe('high');
     expect(escalate('medium', 1, cfg)).toBe('high');
     expect(escalate('max', 2, cfg)).toBe('max');
+    // Budget pressure caps the raise at its own cap, never below the chosen effort.
+    expect(escalate('high', 2, cfg, 2)).toBe('high');
+    expect(escalate('medium', 2, cfg, 2)).toBe('high');
+    expect(escalate('high', 2, cfg, 3)).toBe('high');
+    expect(escalate('high', 2, cfg, 1)).toBe('max');
   });
 });
 
@@ -333,6 +338,13 @@ describe('turn usage and tool errors (0.3.4)', () => {
     expect(t.errors).toBe(3);
     for (let i = 0; i < 10; i++) noteToolResult(t, false, 6);
     expect(t.errors).toBe(3);
+    // Five windows in a row without a failure end the raise; a new cluster raises again.
+    for (let i = 0; i < 19; i++) noteToolResult(t, false, 6);
+    expect(t.errors).toBe(3);
+    noteToolResult(t, false, 6);
+    expect(t.errors).toBe(0);
+    for (const failed of [true, true]) noteToolResult(t, failed, 6);
+    expect(t.errors).toBe(2);
     const whole = { errors: 0 };
     for (const failed of [true, false, false, false, false, false, false, true]) noteToolResult(whole, failed, 0);
     expect(whole.errors).toBe(2);

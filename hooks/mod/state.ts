@@ -61,6 +61,8 @@ export type TurnState = {
   errors: number;
   /** The latest tool results, true for a failure (last `errorWindow`). */
   recent?: boolean[];
+  /** Successful tool results in a row since the last failure (noteToolResult). */
+  calm?: number;
   logged: boolean;
   /** Model requests so far; the request's own model / effort before any rewrite. */
   steps: number;
@@ -85,8 +87,11 @@ export type SubState = {
   /** As TurnState's. */
   errors: number;
   recent?: boolean[];
+  calm?: number;
   steps: number;
   escalated?: number;
+  /** Budget pressure at the spawn: escalation stops at its effort cap. */
+  pressure?: Pressure;
   /** What the subagent would have run on without the mod. */
   baseModel?: string;
   baseEffort?: Effort;
@@ -128,6 +133,8 @@ export const S = {
   /** Drafting a specialist, one at a time: parallel spawns wait and may reuse what was just drafted. */
   draftLock: Promise.resolve() as Promise<void>,
   mergeBusy: false,
+  /** When this session last looked whether a background merge is due (`agents.autoMergeHours`). */
+  autoMergeCheckedAt: 0,
   /** tool_use_id → the call, so a result row knows its tool and command. */
   /** Tool calls by id; `persisted` is where Claude Code saved a Bash output too big to inline. */
   calls: new Map<string, { tool: string; command?: string; agentId?: string; persisted?: string }>(),
@@ -301,11 +308,13 @@ export function turnUsageParts(reported: (ModelTokens & { model: string }) | und
 }
 
 /**
- * Counts a tool result toward effort escalation. `errors` only grows: the most failures seen
- * within the `window` latest results (0: every failure of the turn), so a cluster of failures
- * raises effort for the rest of the turn and scattered ones over a long turn do not.
+ * Counts a tool result toward effort escalation. `errors` is the most failures seen within the
+ * `window` latest results (0: every failure of the turn), so a cluster of failures raises effort
+ * and scattered ones over a long turn do not. The raise holds until `window × CALM_WINDOWS`
+ * results in a row succeed, then ends: a subagent lives for thousands of steps, and one bad
+ * stretch of tests kept 35k of 36k subagent steps escalated (effort changes keep the cache).
  */
-export function noteToolResult(state: { errors: number; recent?: boolean[] }, isError: boolean, window: number): void {
+export function noteToolResult(state: { errors: number; recent?: boolean[]; calm?: number }, isError: boolean, window: number): void {
   if (window <= 0) {
     if (isError) state.errors++;
     return;
@@ -313,8 +322,16 @@ export function noteToolResult(state: { errors: number; recent?: boolean[] }, is
   const recent = (state.recent ??= []);
   recent.push(isError);
   if (recent.length > window) recent.splice(0, recent.length - window);
+  state.calm = isError ? 0 : (state.calm ?? 0) + 1;
+  if (state.calm >= window * CALM_WINDOWS) {
+    state.errors = 0;
+    return;
+  }
   state.errors = Math.max(state.errors, recent.filter(Boolean).length);
 }
+
+/** Successful windows in a row that end an escalation. */
+const CALM_WINDOWS = 5;
 
 /**
  * Which of the mod's saved texts a read goes to: the compaction's archive (`pruned`), folded

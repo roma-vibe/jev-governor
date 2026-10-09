@@ -16,12 +16,14 @@ agents/<name>.json          AgentRecord, one file per specialist subagent (uses,
 skills/<name>.json          SkillRecord, one file per skill (mergedInto likewise)
 drafts/<id>.json            DraftRecord: the UI asks, an open Claude Code session drafts
 merge.json                  MergeRequest: the UI asks, an open session folds near-copy agents
+merge-auto.json             the last background fold (agents.autoMergeHours)
 projects/<id>.json          ProjectRecord: a project page's commands (written by the UI server)
 describe/<id>.json          DescribeRequest: command descriptions an open session writes
 outputs/<session>/<id>.txt  full tool outputs that were trimmed (7 days / 200 MB)
 outputs/<session>/pruned/<tool_use_id>.txt   calls a compaction pruned: input + full output (same caps)
 outputs/<session>/folded/<hash>-<chars>.md   old dialog messages a compaction folded: full text
-outputs/<session>/pruned/index.md            one line per pruned call, newest last (file names relative to it)
+outputs/<session>/pruned/index.md            one line per pruned call of the chat, newest last (file names relative to it)
+outputs/<session>/pruned/index-<agentId>.md  the same for one subagent
 handoffs/<id>.md            a capsule for a new chat (/jevg getctx, /jevg fresh); kept handoff.keepDays (30)
 handoffs/<id>.json          its record: id, cwd, session, title, focus, tokens, sourceTokens, turns, brief, jev, path, attached[]
 ledger/<YYYY-MM-DD>/<session>.jsonl   LedgerEntry per line, written by the mod only (`v`: mod version, since 0.3.2)
@@ -89,6 +91,11 @@ and `-grader-2`), and Jev's vote then split between them. Now:
   get `enabled: false` and `mergedInto`, and a spawn that names them gets the
   kept one. Nothing is deleted; manual agents and skills are never folded away.
   Turning a merged agent back on in the UI clears `mergedInto`.
+- The same fold runs in the background at most every `agents.autoMergeHours`
+  (24; 0 is off), and only when a specialist was drafted since the last pass.
+  One open session does it: it claims `merge-auto.json` (`at`, `worker`,
+  `status`, `result`/`error`); the folds are in the ledger as `agent-created`
+  with `change: "merged"`.
 
 ## Ledger entries (`kind`)
 
@@ -132,6 +139,8 @@ and `-grader-2`), and Jev's vote then split between them. Now:
   follow-up such as «да», «давай», "go on").
 - `usage` also carries `escalated`: effort levels added after failed tool calls
   (counted among the `router.errorWindow` latest tool results since 0.3.4).
+  Since 0.3.8 the raise ends after `5 × errorWindow` successful results in a
+  row, and under budget pressure it stops at that pressure's effort cap.
 - `override` — the person disagreed with the router: a `/model` change
   (`model`, `prevModel`) or a change of the session's own effort (`effort`);
   `reasons` says which.
