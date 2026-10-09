@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 
 import {
   api,
@@ -7,6 +7,7 @@ import {
   type AgentInput,
   type AgentView,
   type DraftRecord,
+  type MergeRecord,
   type SkillInput,
   type SkillView,
 } from '../api.ts';
@@ -27,6 +28,50 @@ const editor = ref<{ agent: AgentView | null } | null>(null);
 const generating = ref(false);
 const resumeId = ref<string | undefined>(undefined);
 const review = ref<DraftRecord | null>(null);
+
+/** A merge asked of the mod: it runs in whichever Claude Code session picks it up first. */
+const merging = ref(false);
+let mergeTimer: ReturnType<typeof setTimeout> | undefined;
+onUnmounted(() => clearTimeout(mergeTimer));
+
+const active = computed(() => agents.value.filter((a) => a.enabled));
+
+function mergeReport(m: MergeRecord): string {
+  if (m.status !== 'done' || !m.result) return '';
+  const groups = [
+    ...m.result.agents.map((g) => `${g.keep} ← ${g.merged.join(', ')}`),
+    ...m.result.skills.map((g) => `${t('skill')} ${g.keep} ← ${g.merged.join(', ')}`),
+  ];
+  return groups.length ? t('Merged: {list}', { list: groups.join('; ') }) : t('No near-copies found.');
+}
+
+async function pollMerge(startedAt: number): Promise<void> {
+  const m = await api.merge().catch(() => undefined);
+  if (m && (m.status === 'done' || m.status === 'error')) {
+    merging.value = false;
+    if (m.status === 'done') notify(mergeReport(m));
+    else notify(t('Merge failed: {error}', { error: m.error ?? '' }), 'error');
+    await load();
+    return;
+  }
+  // The mod picks requests up between steps of a running session: none running, nothing happens.
+  if (Date.now() - startedAt > 180_000) {
+    merging.value = false;
+    notify(t('No Claude Code session with the mod picked the request up yet; it will run in the next one.'), 'error');
+    return;
+  }
+  mergeTimer = setTimeout(() => void pollMerge(startedAt), 2000);
+}
+
+async function merge(): Promise<void> {
+  merging.value = true;
+  try {
+    await api.requestMerge();
+    void pollMerge(Date.now());
+  } catch {
+    merging.value = false;
+  }
+}
 
 async function load(): Promise<void> {
   try {
@@ -84,7 +129,7 @@ const STOP = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'from', 'when
 
 /** Agents whose descriptions mostly overlap: candidates to merge into one. */
 const similar = computed(() => {
-  const sets = agents.value.map((a) => ({ name: a.name, words: words(`${a.name.replace(/-/g, ' ')} ${a.description}`) }));
+  const sets = active.value.map((a) => ({ name: a.name, words: words(`${a.name.replace(/-/g, ' ')} ${a.description}`) }));
   const out = new Map<string, string[]>();
   for (const a of sets) {
     for (const b of sets) {
@@ -196,7 +241,16 @@ function closeGenerate(): void {
     <div class="flex flex-wrap items-center gap-2">
       <button type="button" class="btn btn-primary" @click="editor = { agent: null }">{{ t('New agent') }}</button>
       <button type="button" class="btn" @click="generating = true">{{ t('Generate from a description') }}</button>
-      <span class="text-sm text-zinc-500 dark:text-zinc-400">{{ t('Total: {n}', { n: agents.length }) }}</span>
+      <button
+        type="button"
+        class="btn"
+        :disabled="merging || active.length < 2"
+        :title="t('Claude compares all enabled agents and folds near-copies into one: the kept one takes their skills and runs, the others are disabled (not deleted). Manual agents are never folded away.')"
+        @click="merge"
+      >
+        {{ merging ? t('Merging…') : t('Merge near-copies') }}
+      </button>
+      <span class="text-sm text-zinc-500 dark:text-zinc-400">{{ t('Enabled: {on} of {n}', { on: active.length, n: agents.length }) }}</span>
     </div>
 
     <p v-if="!loaded" class="text-sm text-zinc-500">{{ t('Loading…') }}</p>
@@ -216,6 +270,8 @@ function closeGenerate(): void {
               <span v-if="agent.tier !== 'auto'" class="badge badge-amber">{{ t('model: {tier}', { tier: tierLabel[agent.tier] }) }}</span>
               <span v-if="agent.effort !== 'auto'" class="badge badge-amber">{{ t('effort: {effort}', { effort: agent.effort }) }}</span>
               <span v-if="agent.tier === 'auto' && agent.effort === 'auto'" class="badge badge-gray">{{ t('model and effort: Jev') }}</span>
+              <span v-if="agent.mergedInto" class="badge badge-gray">{{ t('merged into {name}', { name: agent.mergedInto }) }}</span>
+              <span v-else-if="agent.retiredAt && !agent.enabled" class="badge badge-gray">{{ t('retired: registry full') }}</span>
               <span
                 v-if="unused(agent)"
                 class="badge badge-amber"
@@ -246,9 +302,9 @@ function closeGenerate(): void {
           <span v-for="s in agent.skills" :key="s" class="badge badge-gray mono">{{ s }}</span>
         </div>
 
-        <p v-if="similar.get(agent.name)" class="help">
+        <p v-if="agent.enabled && similar.get(agent.name)" class="help">
           {{
-            t('Similar to {names}: you may want to keep just one (move the skills over and delete the other).', {
+            t('Similar to {names}: “Merge near-copies” folds such agents into one.', {
               names: similar.get(agent.name)!.join(', '),
             })
           }}
@@ -256,6 +312,7 @@ function closeGenerate(): void {
 
         <p class="text-xs text-zinc-500 dark:text-zinc-400">
           {{ t('Runs in 30 days:') }} <span class="tabular-nums">{{ agent.stats.uses }}</span> · {{ fmtAgo(agent.stats.lastUsedAt) }}
+          <template v-if="agent.uses !== undefined"> · {{ t('all runs:') }} <span class="tabular-nums">{{ agent.uses }}</span></template>
         </p>
 
         <div class="mt-auto flex gap-2">

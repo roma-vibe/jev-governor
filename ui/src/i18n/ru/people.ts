@@ -12,6 +12,20 @@ export default {
   'New agent': 'Новый агент',
   'Generate from a description': 'Сгенерировать по описанию',
   'Total: {n}': 'Всего: {n}',
+  'Enabled: {on} of {n}': 'Включено: {on} из {n}',
+  'Merge near-copies': 'Слить дубли',
+  'Merging…': 'Сливаю…',
+  'Claude compares all enabled agents and folds near-copies into one: the kept one takes their skills and runs, the others are disabled (not deleted). Manual agents are never folded away.':
+    'Claude сравнивает все включённые агенты и сливает почти одинаковые в один: оставшийся забирает их навыки и запуски, остальные выключаются (не удаляются). Агенты, созданные вручную, никогда не сливаются в другие.',
+  skill: 'навык',
+  'Merged: {list}': 'Слиты: {list}',
+  'No near-copies found.': 'Похожих агентов не нашлось.',
+  'Merge failed: {error}': 'Слить не удалось: {error}',
+  'No Claude Code session with the mod picked the request up yet; it will run in the next one.':
+    'Ни одна сессия Claude Code с модом пока не взяла запрос; он выполнится в следующей.',
+  'merged into {name}': 'слит в {name}',
+  'retired: registry full': 'выведен: реестр полон',
+  'all runs:': 'всего запусков:',
   'No agents yet. They will appear on their own as you work, or create the first one by hand.':
     'Агентов пока нет. Они появятся сами по мере работы или создайте первого вручную.',
   auto: 'авто',
@@ -24,8 +38,8 @@ export default {
   'not used': 'не используется',
   'tools: {n}': 'инструментов: {n}',
   'Enable {name}': 'Включить {name}',
-  'Similar to {names}: you may want to keep just one (move the skills over and delete the other).':
-    'Похож на {names}: возможно, стоит оставить одного (перенести навыки и удалить второго).',
+  'Similar to {names}: “Merge near-copies” folds such agents into one.':
+    'Похож на {names}: кнопка «Слить дубли» сольёт такие агенты в один.',
   'Runs in 30 days:': 'Запусков за 30 дней:',
   Edit: 'Редактировать',
   Delete: 'Удалить',

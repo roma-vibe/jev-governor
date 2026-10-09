@@ -11,9 +11,11 @@ every shape is `hooks/lib/types.ts`; validation is `hooks/lib/config.ts`
 config.json                 GovernorConfig — written with defaults on first run
 openrouter.key              default key file (config.jev.keyFile); env OPENROUTER_API_KEY wins
 agents/<name>.json          AgentRecord, one file per specialist subagent (uses, lastUsedAt;
-                            retiredAt when the mod turned it off to make room)
-skills/<name>.json          SkillRecord, one file per skill
+                            retiredAt when the mod turned it off to make room;
+                            mergedInto when it was folded into a near-copy, enabled false)
+skills/<name>.json          SkillRecord, one file per skill (mergedInto likewise)
 drafts/<id>.json            DraftRecord: the UI asks, an open Claude Code session drafts
+merge.json                  MergeRequest: the UI asks, an open session folds near-copy agents
 projects/<id>.json          ProjectRecord: a project page's commands (written by the UI server)
 describe/<id>.json          DescribeRequest: command descriptions an open session writes
 outputs/<session>/<id>.txt  full tool outputs that were trimmed (7 days / 200 MB)
@@ -33,6 +35,7 @@ ui.pid                      pid of a detached UI server
 | `config.json` | first run (defaults), `/jevg on|off` | Settings page |
 | `agents/*`, `skills/*` | auto-created specialists | create, edit, delete |
 | `drafts/*` | `pending` → `working` → `done`/`error` | creates `pending`, accepts or deletes |
+| `merge.json` | `pending` → `working` → `done`/`error` | creates `pending`, reads the result |
 | `projects/*` | — | scans, merges learned commands, edits |
 | `describe/*` | `pending` → `working` → `done`/`error` | creates, merges `done` into `projects/`, deletes |
 | `ledger/**` | append | read only |
@@ -65,7 +68,28 @@ decides per task.
    `working`, drafts with `$.model.complete` (Sonnet 5.5, low effort) and
    writes `done` with `result: { agent, skills }`, or `error`.
 3. The UI shows the result for review; accepting saves `agents/` and
-   `skills/` files and deletes the draft.
+   `skills/` files and deletes the draft. When an existing agent already
+   covers the description, the draft ends in `error` naming it.
+
+## Merging near-copies
+
+Parallel spawns of one task used to draft near-copies (`judge-packet-v2-grader`
+and `-grader-2`), and Jev's vote then split between them. Now:
+
+- A spawn's draft sees every enabled specialist and may answer `{"reuse": name}`;
+  a draft under an existing name is that specialist, never a `-2` copy, and a
+  "new" skill under an existing skill's name is that skill.
+- Jev's pick counts when the likeliest specialist reaches `agents.matchAt`, or
+  the specialists together do (near-copies split the vote) and `none` is not the pick.
+- A full registry first folds near-copies together (at most every 6 h), then
+  retires its longest-idle auto-drafted specialist; neither helping, the spawn
+  runs without one and the ledger says so once.
+- `/jevg agents merge`, or the "Merge near-copies" button (`merge.json`), folds
+  them on demand with the draft model. The kept specialist takes the group's
+  skills, tools, runs and last run, and may get a wider description; the others
+  get `enabled: false` and `mergedInto`, and a spawn that names them gets the
+  kept one. Nothing is deleted; manual agents and skills are never folded away.
+  Turning a merged agent back on in the UI clears `mergedInto`.
 
 ## Ledger entries (`kind`)
 
@@ -90,7 +114,8 @@ decides per task.
 - `window` — once per session: Claude Code's auto-compaction window
   (`compaction.autoWindowTokens`): `autoWindow: { by: mod | user | none, wanted?, tokens?, source? }`;
   `tokens`/`source` are what the engine measures against (`source: env` when the variable took).
-- `agent-created` — a specialist was drafted: `agent`, `reasons` (new skills).
+- `agent-created` — a specialist was drafted: `agent`, `reasons` (new skills);
+  with `change: "merged"` (`mergedInto`) or `change: "retired"` it was turned off instead.
 - `trim` — a trimmed tool output: `trim: { tool, command, charsBefore, charsAfter, outcome, jevChunks, path }`.
 - `output-read` — the model opened a saved full output or a pruned call (`text` names the tool and path;
   `archive`: pruned / folded / trim / tool-results / other, since 0.3.4).

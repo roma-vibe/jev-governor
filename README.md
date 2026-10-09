@@ -9,7 +9,7 @@ Mods shipped in Claude Code 2.1.287. This one uses only that official mechanism:
 ## What it does
 
 - **Model and effort per turn.** Effort (`low`…`max`) is picked on every turn. Switching to Sonnet 5.5 is priced in dollars: rewriting the context into the other model's cache against what Sonnet saves on output over the next turns (cache reads cost the same on both). Short continuations ("yes", "go on") are decided locally, without asking Jev.
-- **Subagents.** Model and effort are chosen per task at spawn. Read-only subagents with an easy task run on Haiku 5.5 (a twentieth of Sonnet's price under a 100K-token prompt, a quarter above) and move up to Sonnet when the task grows or tools keep failing. Generic subagents get the role of a matching specialist; if none exists, one is created (short English prompt and skills, drafted by Sonnet 5.5).
+- **Subagents.** Model and effort are chosen per task at spawn. Read-only subagents with an easy task run on Haiku 5.5 (a twentieth of Sonnet's price under a 100K-token prompt, a quarter above) and move up to Sonnet when the task grows or tools keep failing. Generic subagents get the role of a matching specialist; if none exists, one is created (short English prompt and skills, drafted by Sonnet 5.5). Near-copies are not drafted, and `/jevg agents merge` (or the UI button) folds existing ones into one.
 - **Compaction without a summary.** Jev removes stale tool calls and results; the remaining text stays verbatim. It runs when the context reaches 200k (Jev can remove ≥40%), and whenever Claude Code compacts itself. Optionally (off by default, `compaction.onReturn`) also while you are away, once the cache has expired, so that the rewrite on your return is smaller. The mod also sets Claude Code's auto-compact window (`compaction.autoWindowTokens`, 250k) so the engine starts a compaction in the middle of a long turn and inside subagents; those go through Jev too.
 - **Old dialog folded.** At every compaction, earlier answers, agent reports, monitor events and long pastes older than the last two turns keep their first lines and a link to a file with the full text (`compaction.fold`). Jev keeps the ones the current work still relies on. On a long real chat this removed 35–67% of the dialog text per compaction.
 - **Nothing is lost.** Everything compaction removes is archived to files and the history keeps a pointer; Claude reads it back when it needs an old detail.
@@ -66,6 +66,7 @@ Mods run with your permissions and are not sandboxed: read the code before you e
 - `/jevg fresh [--brief|--nobrief] [focus]`: continue in this window with a clean chat
 - `/jevg getctx [--brief|--nobrief] [focus]`: a compact context of this chat for a new one (prompt copied to the clipboard)
 - `/jevg ctx [list|<id>]`: in a new chat, attach a project capsule to the next message
+- `/jevg agents [merge]`: the specialists (on, merged, retired, most used); `merge` folds near-copies into one now
 - `/jevg memory [on|off|start]`: long-term memory: its state and the server's, switch it, start the local server
 
 The mod's own messages (chat notices, toasts, command replies) and the UI come in English and Russian. Setting `ui.language`: `auto` (default) follows the language set in Claude Code (`language` in `~/.claude/settings.json`), then the system language; `en` or `ru` forces one.

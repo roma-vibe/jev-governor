@@ -317,6 +317,8 @@ export type AgentRecord = {
   lastUsedAt?: string;
   /** Turned off by the mod to make room in a full registry (`enabled` false). */
   retiredAt?: string;
+  /** Folded into this specialist as a near-copy of it (`enabled` false): a spawn that picks or redrafts it gets that one. */
+  mergedInto?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -327,6 +329,18 @@ export type SkillRecord = {
   /** Concrete reusable know-how (commands, conventions, pitfalls). */
   body: string;
   origin: 'auto' | 'manual';
+  /** Folded into this skill as a near-copy of it: agents list that one instead. */
+  mergedInto?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** A request from the UI for the mod to fold near-copy specialists together (merge.json). */
+export type MergeRequest = {
+  status: 'pending' | 'working' | 'done' | 'error';
+  /** What was folded: each kept specialist with the ones merged into it, and skills likewise. */
+  result?: { agents: { keep: string; merged: string[] }[]; skills: { keep: string; merged: string[] }[] };
+  error?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -394,6 +408,9 @@ export type LedgerEntry = {
   agent?: string;
   subagentType?: string;
   created?: boolean;
+  /** `agent-created`: not a new specialist but one turned off (`retired`) or folded into `mergedInto` (`merged`). */
+  change?: 'retired' | 'merged';
+  mergedInto?: string;
   usage?: {
     model: string;
     input: number;

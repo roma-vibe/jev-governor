@@ -45,13 +45,18 @@ import { commandDir, describePrompt, describeSystem, normalizeObserved, parseDes
 import {
   agentQuestion,
   agentType,
+  applyMerge,
   composePrompt,
   DRAFT_SYSTEM,
   draftPrompt,
-  NONE,
+  MERGE_SYSTEM,
+  mergePrompt,
   parseDraft,
+  parseMerge,
+  pickedAgent,
   PLUGIN,
   rankCandidates,
+  resolveAgent,
   retireCandidate,
   sanitizeAgent,
   sanitizeSkill,
@@ -79,6 +84,7 @@ import type {
   DescribeRequest,
   DraftRecord,
   LedgerEntry,
+  MergeRequest,
   SkillRecord,
 } from './lib/types.ts';
 
@@ -599,10 +605,14 @@ async function decideMainTurn($: EngineInterface, text: string): Promise<MainOut
 
 // -------------------------------------------------------------- subagents --
 
+/**
+ * Drafts a specialist for a task with the draft model. The drafter sees every enabled
+ * specialist and may answer that one already fits (`reuse`): that one is returned, not created.
+ */
 async function createAgent(
   $: EngineInterface,
   input: { title: string; task: string },
-): Promise<AgentRecord | undefined> {
+): Promise<{ agent?: AgentRecord; created: boolean }> {
   const reply = await $.model.complete({
     model: S.cfg.agents.draftModel,
     system: DRAFT_SYSTEM,
@@ -619,13 +629,14 @@ async function createAgent(
   });
   if (!reply.isAnswered) {
     await ledger($, { kind: 'error', error: `draft agent: ${reply.reason}` });
-    return undefined;
+    return { created: false };
   }
   const draft = parseDraft(reply.text, { agents: new Set(S.agents.keys()), skills: S.skills }, nowIso());
   if (!draft) {
     await ledger($, { kind: 'error', error: 'draft agent: unusable reply', text: clip(reply.text, 200) });
-    return undefined;
+    return { created: false };
   }
+  if ('reuse' in draft) return { agent: await reviveAgent($, draft.reuse), created: false };
   await persistAgent($, draft.agent, draft.skills);
   await registerAgent($, draft.agent);
   await ledger($, {
@@ -635,7 +646,23 @@ async function createAgent(
     reasons: draft.skills.map((s) => `new skill ${s.name}`),
   });
   $.ui.toast(`jev-governor: new subagent ${draft.agent.name}`, { timeoutMs: 6000 });
-  return draft.agent;
+  return { agent: draft.agent, created: true };
+}
+
+/**
+ * The specialist a drafter's `reuse` names: itself or what it was merged into. One the mod
+ * retired comes back on (it is needed again); one turned off by hand stays off and none is used.
+ */
+async function reviveAgent($: EngineInterface, name: string): Promise<AgentRecord | undefined> {
+  const live = resolveAgent(S.agents, name);
+  if (live) return live;
+  const own = S.agents.get(name);
+  if (!own?.retiredAt || own.mergedInto !== undefined) return undefined;
+  const { retiredAt: _retiredAt, ...rest } = own;
+  const back: AgentRecord = { ...rest, enabled: true, updatedAt: nowIso() };
+  await persistAgent($, back, []);
+  await registerAgent($, back);
+  return back;
 }
 
 /**
@@ -672,7 +699,7 @@ async function planSpawn(
   const known = new Set(S.agents.keys());
   const ownName = e.subagentType.startsWith(`${PLUGIN}:`) ? e.subagentType.slice(PLUGIN.length + 1) : undefined;
   const remap = cfg.agents.enabled && cfg.agents.remapFrom.includes(e.subagentType);
-  const candidates = remap ? rankCandidates([...S.agents.values()], `${e.description} ${e.prompt}`, MAX_CANDIDATES) : [];
+  const candidates = remap ? rankCandidates([...S.agents.values()], e.prompt, MAX_CANDIDATES, e.description) : [];
   const questions: JevQuestions = {
     ...(cfg.router.subagents ? subagentQuestions() : {}),
     ...(candidates.length > 0 ? { agent: agentQuestion(candidates) } : {}),
@@ -702,13 +729,9 @@ async function planSpawn(
   let agent = ownName ? S.agents.get(ownName) : undefined;
   let created = false;
   if (remap && !jevDown) {
-    const pick = asked ? choice(asked.response.answers, 'agent') : undefined;
-    const p = pick ? (pick.probabilities[pick.choice] ?? 0) : 0;
-    if (pick && pick.choice !== NONE && p >= cfg.agents.matchAt && S.agents.get(pick.choice)?.enabled) {
-      agent = S.agents.get(pick.choice);
-    } else if (cfg.agents.autoCreate && !shadow()) {
-      ({ agent, created } = await draftOrReuse($, e, known));
-    }
+    const picked = pickedAgent(asked ? choice(asked.response.answers, 'agent') : undefined, cfg.agents.matchAt);
+    agent = picked ? resolveAgent(S.agents, picked) : undefined;
+    if (!agent && cfg.agents.autoCreate && !shadow()) ({ agent, created } = await draftOrReuse($, e, known));
   }
   if (agent && !created && (remap || ownName)) void noteUse($, agent);
 
@@ -767,8 +790,8 @@ const RETIRE_IDLE_DAYS = 14;
  * Drafts a specialist for a spawn no existing one fits, one draft at a time. Parallel spawns
  * of one task otherwise drafted near-copies (`judge-packet-v2-grader` and `-grader-2` four
  * seconds apart): a spawn that waited first asks Jev whether a specialist drafted meanwhile
- * fits, and a new draft sees every earlier one. A full registry turns off its longest-idle
- * auto-drafted specialist to make room.
+ * (here or in another session) fits, and a new draft sees every earlier one. A full registry
+ * first folds its near-copies together, then turns off its longest-idle auto-drafted specialist.
  */
 async function draftOrReuse(
   $: EngineInterface,
@@ -780,6 +803,7 @@ async function draftOrReuse(
   S.draftLock = new Promise<void>((resolve) => (release = resolve));
   try {
     await prior;
+    if (await loadRegistry($)) await registerAll($);
     const fresh = [...S.agents.values()].filter((a) => a.enabled && !known.has(a.name));
     if (fresh.length > 0) {
       const asked = await askJev(
@@ -789,26 +813,104 @@ async function draftOrReuse(
         undefined,
         'subagent',
       );
-      const pick = asked ? choice(asked.response.answers, 'agent') : undefined;
-      const p = pick ? (pick.probabilities[pick.choice] ?? 0) : 0;
-      const reuse = pick && pick.choice !== NONE && p >= S.cfg.agents.matchAt ? S.agents.get(pick.choice) : undefined;
-      if (reuse?.enabled) return { agent: reuse, created: false };
+      const picked = pickedAgent(asked ? choice(asked.response.answers, 'agent') : undefined, S.cfg.agents.matchAt);
+      const reuse = picked ? resolveAgent(S.agents, picked) : undefined;
+      if (reuse) return { agent: reuse, created: false };
     }
-    const enabled = [...S.agents.values()].filter((a) => a.enabled);
-    if (enabled.length >= S.cfg.agents.maxAgents) {
-      const old = retireCandidate(enabled, Date.now(), RETIRE_IDLE_DAYS);
-      if (!old) return { created: false };
-      await retireAgent($, old);
-    }
-    const agent = await createAgent($, { title: e.description, task: e.prompt }).catch(async (error) => {
+    if (!(await makeRoom($))) return { created: false };
+    const made = await createAgent($, { title: e.description, task: e.prompt }).catch(async (error) => {
       await ledger($, { kind: 'error', error: `create agent: ${errorText(error)}` });
-      return undefined;
+      return { agent: undefined, created: false };
     });
-    if (agent) await noteUse($, agent);
-    return { agent, created: agent !== undefined };
+    if (made.agent && made.created) await noteUse($, made.agent);
+    return made;
   } finally {
     release();
   }
+}
+
+/** Auto-merging at most this often: it costs a draft-model call over the whole registry. */
+const AUTO_MERGE_EVERY_MS = 6 * 3_600_000;
+
+/**
+ * Room for one more specialist: a full registry folds its near-copies together (at most every
+ * few hours), then turns off its longest-idle auto-drafted specialist. False when neither helps.
+ */
+async function makeRoom($: EngineInterface): Promise<boolean> {
+  const enabled = () => [...S.agents.values()].filter((a) => a.enabled);
+  if (enabled().length < S.cfg.agents.maxAgents) return true;
+  if (Date.now() - S.mergedAt >= AUTO_MERGE_EVERY_MS) {
+    S.mergedAt = Date.now();
+    await mergeOnce($, 'registry full').catch(async (error) => {
+      await ledger($, { kind: 'error', error: `merge agents: ${errorText(error)}` });
+    });
+    if (enabled().length < S.cfg.agents.maxAgents) return true;
+  }
+  const old = retireCandidate(enabled(), Date.now(), RETIRE_IDLE_DAYS);
+  if (old) {
+    await retireAgent($, old);
+    return true;
+  }
+  if (!S.fullNoted) {
+    S.fullNoted = true;
+    await ledger($, {
+      kind: 'error',
+      error: `registry full: ${enabled().length} of ${S.cfg.agents.maxAgents} specialists, none idle ${RETIRE_IDLE_DAYS} days; no new specialist is drafted (/jevg agents merge, or raise agents.maxAgents)`,
+    });
+  }
+  return false;
+}
+
+/**
+ * Folds near-copy specialists and skills together with the draft model (it sees every enabled
+ * specialist and skill). Returns the groups it folded; nothing is deleted, merged ones are off.
+ */
+async function mergeAgents(
+  $: EngineInterface,
+  why: string,
+): Promise<{ agents: { keep: string; merged: string[] }[]; skills: { keep: string; merged: string[] }[] } | undefined> {
+  if (await loadRegistry($)) await registerAll($);
+  if ([...S.agents.values()].filter((a) => a.enabled).length < 2) return { agents: [], skills: [] };
+  const reply = await $.model.complete({
+    model: S.cfg.agents.draftModel,
+    system: MERGE_SYSTEM,
+    prompt: mergePrompt([...S.agents.values()], [...S.skills.values()]),
+    maxTokens: 4000,
+    effort: 'low',
+    timeoutMs: S.cfg.agents.draftTimeoutMs * 2,
+  });
+  if (!reply.isAnswered) {
+    await ledger($, { kind: 'error', error: `merge agents: ${reply.reason}` });
+    return undefined;
+  }
+  // The registry may have changed while the model thought: the plan is checked against it now.
+  await loadRegistry($);
+  const plan = parseMerge(reply.text, S.agents, S.skills);
+  if (!plan) {
+    await ledger($, { kind: 'error', error: 'merge agents: unusable reply', text: clip(reply.text, 200) });
+    return undefined;
+  }
+  const { agents, skills } = applyMerge(plan, S.agents, S.skills, nowIso());
+  for (const skill of skills) {
+    await $.fs.write(`${S.data}/skills/${skill.name}.json`, `${JSON.stringify(skill, null, 2)}\n`);
+    S.skills.set(skill.name, skill);
+  }
+  for (const agent of agents) {
+    await $.fs.write(`${S.data}/agents/${agent.name}.json`, `${JSON.stringify(agent, null, 2)}\n`);
+    S.agents.set(agent.name, agent);
+  }
+  S.registrySig = await registrySignature($);
+  await registerAll($);
+  for (const g of plan.agents) {
+    for (const name of g.merge) {
+      await ledger($, { kind: 'agent-created', change: 'merged', agent: name, mergedInto: g.keep, text: `merged into ${g.keep} (${why})` });
+    }
+  }
+  if (plan.agents.length > 0) S.fullNoted = false;
+  return {
+    agents: plan.agents.map((g) => ({ keep: g.keep, merged: g.merge })),
+    skills: plan.skills.map((g) => ({ keep: g.keep, merged: g.merge })),
+  };
 }
 
 async function retireAgent($: EngineInterface, agent: AgentRecord): Promise<void> {
@@ -820,6 +922,7 @@ async function retireAgent($: EngineInterface, agent: AgentRecord): Promise<void
     S.registrySig = await registrySignature($);
     await ledger($, {
       kind: 'agent-created',
+      change: 'retired',
       agent: agent.name,
       text: `retired: registry full (${S.cfg.agents.maxAgents})`,
       reasons: [`uses ${agent.uses ?? 0}, last ${(agent.lastUsedAt ?? agent.createdAt).slice(0, 10)}`],
@@ -1744,15 +1847,23 @@ async function processDrafts($: EngineInterface): Promise<void> {
       const parsed = reply.isAnswered
         ? parseDraft(reply.text, { agents: new Set(S.agents.keys()), skills: S.skills }, nowIso())
         : undefined;
-      if (parsed) parsed.agent.origin = 'manual';
-      const done: DraftRecord = parsed
-        ? { ...draft, status: 'done', result: parsed, updatedAt: nowIso() }
-        : {
-            ...draft,
-            status: 'error',
-            error: reply.isAnswered ? 'the reply was not a usable agent' : `model call failed: ${reply.reason}`,
-            updatedAt: nowIso(),
-          };
+      if (parsed && 'agent' in parsed) parsed.agent.origin = 'manual';
+      const done: DraftRecord =
+        parsed && 'agent' in parsed
+          ? { ...draft, status: 'done', result: parsed, updatedAt: nowIso() }
+          : {
+              ...draft,
+              status: 'error',
+              error: parsed
+                ? L(
+                    `Это уже умеет агент «${parsed.reuse}»: лучше поправить его описание или промпт.`,
+                    `Agent “${parsed.reuse}” already covers this: better edit its description or prompt.`,
+                  )
+                : reply.isAnswered
+                  ? 'the reply was not a usable agent'
+                  : `model call failed: ${reply.reason}`,
+              updatedAt: nowIso(),
+            };
       await $.fs.write(path, `${JSON.stringify(done, null, 2)}\n`);
     }
   } catch (error) {
@@ -1899,6 +2010,91 @@ function saveHandoff($: EngineInterface, brief: string | undefined, title: strin
 }
 
 /** `/jevg memory [on|off|start]`: the option, and whether the server answers. */
+/** The registry in one line: specialists on, of the limit, and why the others are off. */
+function registryLine(): string {
+  const all = [...S.agents.values()];
+  const on = all.filter((a) => a.enabled).length;
+  const merged = all.filter((a) => a.mergedInto !== undefined).length;
+  const retired = all.filter((a) => !a.enabled && a.retiredAt && a.mergedInto === undefined).length;
+  const off = all.length - on - merged - retired;
+  const skills = [...S.skills.values()].filter((s) => s.mergedInto === undefined).length;
+  return L(
+    `Специалисты: ${on} из ${S.cfg.agents.maxAgents} включены` +
+      `${merged ? `, ${merged} слиты` : ''}${retired ? `, ${retired} выведены` : ''}${off ? `, ${off} выключены вручную` : ''}; навыков ${skills}.`,
+    `Specialists: ${on} of ${S.cfg.agents.maxAgents} on` +
+      `${merged ? `, ${merged} merged` : ''}${retired ? `, ${retired} retired` : ''}${off ? `, ${off} off by hand` : ''}; skills ${skills}.`,
+  );
+}
+
+function mergeText(done: NonNullable<Awaited<ReturnType<typeof mergeAgents>>>): string {
+  if (done.agents.length === 0 && done.skills.length === 0) return L('Похожих специалистов не нашлось.', 'No near-copies found.');
+  return [
+    ...done.agents.map((g) => `${g.keep} ← ${g.merged.join(', ')}`),
+    ...done.skills.map((g) => `${L('навык', 'skill')} ${g.keep} ← ${g.merged.join(', ')}`),
+  ].join('\n');
+}
+
+/** Runs one merge at a time: the command, the UI's request and a full registry share it. */
+async function mergeOnce($: EngineInterface, why: string): Promise<Awaited<ReturnType<typeof mergeAgents>> | 'busy'> {
+  if (S.mergeBusy) return 'busy';
+  S.mergeBusy = true;
+  try {
+    return await mergeAgents($, why);
+  } finally {
+    S.mergeBusy = false;
+  }
+}
+
+/** `/jevg agents`: the registry and its most used specialists; `/jevg agents merge`: fold near-copies together now. */
+async function agentsCommand($: EngineInterface, arg: string): Promise<string> {
+  await loadConfig($, true);
+  if (await loadRegistry($)) await registerAll($);
+  if (arg === 'merge') {
+    const done = await mergeOnce($, '/jevg agents merge').catch(async (error) => {
+      await ledger($, { kind: 'error', error: `merge agents: ${errorText(error)}` });
+      return undefined;
+    });
+    if (done === 'busy') return L('Слияние уже идёт.', 'A merge is already running.');
+    if (!done) return L('Слияние не удалось: подробности в журнале (/jevg ui).', 'The merge failed: see the journal (/jevg ui).');
+    return `${mergeText(done)}\n${registryLine()}`;
+  }
+  const top = [...S.agents.values()]
+    .filter((a) => a.enabled)
+    .sort((a, b) => (b.uses ?? 0) - (a.uses ?? 0) || a.name.localeCompare(b.name))
+    .slice(0, 8)
+    .map((a) => `${a.name} ${a.uses ?? 0}×`);
+  return [
+    registryLine(),
+    top.length ? `${L('Чаще всего', 'Most used')}: ${top.join(', ')}` : '',
+    L('Слить похожих: /jevg agents merge', 'Fold near-copies together: /jevg agents merge'),
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+/** The UI's request to fold near-copies together (merge.json), done by one session. */
+async function processMerge($: EngineInterface): Promise<void> {
+  const path = `${S.data}/merge.json`;
+  if (!S.cfg.enabled || S.mergeBusy || !(await $.fs.exists(path))) return;
+  const request = (await readJson($, path)) as (MergeRequest & { worker?: string }) | undefined;
+  if (!request || request.status !== 'pending') return;
+  await $.fs.write(path, JSON.stringify({ ...request, status: 'working', worker: S.session, updatedAt: nowIso() }, null, 2));
+  await $.clock.sleep(400);
+  const claimed = (await readJson($, path)) as { worker?: string } | undefined;
+  if (claimed?.worker !== S.session) return;
+  const done = await mergeOnce($, 'UI').catch((error: unknown) => errorText(error));
+  if (done === 'busy') {
+    // A full registry is merging right now: the request waits for the next pass.
+    await $.fs.write(path, `${JSON.stringify({ ...request, status: 'pending', updatedAt: nowIso() }, null, 2)}\n`);
+    return;
+  }
+  const result: MergeRequest =
+    done && typeof done === 'object'
+      ? { ...request, status: 'done', result: done, updatedAt: nowIso() }
+      : { ...request, status: 'error', error: typeof done === 'string' ? done : 'the merge failed (see the journal)', updatedAt: nowIso() };
+  await $.fs.write(path, `${JSON.stringify(result, null, 2)}\n`);
+}
+
 async function memoryCommand($: EngineInterface, arg: string): Promise<string> {
   await loadConfig($, true);
   if (arg === 'on' || arg === 'off') {
@@ -2034,7 +2230,7 @@ async function statusReport($: EngineInterface): Promise<string> {
     `jev-governor ${cfg.enabled ? (S.chat.off ? 'OFF in this chat (/jevg chat on)' : `ON (${shadow() ? L('наблюдение', 'shadow') : 'active'})`) : 'OFF'} · key ${S.key ? 'found' : 'MISSING'} · Jev ${cfg.jev.model}${isExcluded(cfg, S.cwd, S.home) ? L(' · проект исключён: к Jev ничего не уходит', ' · project excluded: nothing is sent to Jev') : ''}`,
     `routing: main model ${cfg.router.mainModel ? 'on' : 'off'}, main effort ${cfg.router.mainEffort ? 'on' : 'off'}, subagents ${cfg.router.subagents ? 'on' : 'off'}; compaction ${cfg.compaction.enabled ? `on (at ${Math.round(cfg.compaction.compactAtTokens / 1000)}k${cfg.compaction.archive ? ', archive' : ''})` : 'off'}; handoff ${cfg.handoff.enabled ? 'on' : 'off'}`,
     `last: ${S.route.lastModel ? displayModel(S.route.lastModel) : '—'}${prev ? ` · ${prev.effort}` : ''} · budget ${budget.text || 'n/a'} (pressure ${budget.pressure})`,
-    `agents: ${S.agents.size} (${[...S.agents.keys()].slice(0, 12).join(', ') || 'none yet'}) · skills: ${S.skills.size}`,
+    `${registryLine()} (/jevg agents)`,
     `data: ${S.data}`,
     L(
       'commands: /jevg status | on | off | chat on|off | idle on|off | ui | reload | fresh [--brief|--nobrief] [фокус] | getctx [--brief|--nobrief] [фокус] | ctx [list|<id>]',
@@ -2079,16 +2275,19 @@ async function bindSession($: EngineInterface, starting: boolean): Promise<void>
     await $.command.register({
       name: 'jevg',
       description: L(
-        'jev-governor: status, on, off, chat on|off (this chat only), idle on|off (compact after a pause in this chat), ui, reload; fresh — продолжить в этом окне с чистым чатом и капсулой; getctx — капсула для нового чата, ctx — подключить её',
-        'jev-governor: status, on, off, chat on|off (this chat only), idle on|off (compact after a pause in this chat), ui, reload; fresh — continue in this window with a clean chat and a capsule; getctx — a capsule for a new chat; ctx — attach it',
+        'jev-governor: status, on, off, chat on|off (this chat only), idle on|off (compact after a pause in this chat), agents [merge], ui, reload; fresh — продолжить в этом окне с чистым чатом и капсулой; getctx — капсула для нового чата, ctx — подключить её',
+        'jev-governor: status, on, off, chat on|off (this chat only), idle on|off (compact after a pause in this chat), agents [merge], ui, reload; fresh — continue in this window with a clean chat and a capsule; getctx — a capsule for a new chat; ctx — attach it',
       ),
       argumentHint: L(
-        '[status|on|off|chat on|off|idle on|off|ui|reload|fresh [фокус]|getctx [фокус]|ctx [list|id]]',
-        '[status|on|off|chat on|off|idle on|off|ui|reload|fresh [focus]|getctx [focus]|ctx [list|id]]',
+        '[status|on|off|chat on|off|idle on|off|agents [merge]|ui|reload|fresh [фокус]|getctx [фокус]|ctx [list|id]]',
+        '[status|on|off|chat on|off|idle on|off|agents [merge]|ui|reload|fresh [focus]|getctx [focus]|ctx [list|id]]',
       ),
     });
     $.clock.every(8000, () => {
-      void processDrafts($).then(() => processDescribe($)).catch(() => undefined);
+      void processDrafts($)
+        .then(() => processMerge($))
+        .then(() => processDescribe($))
+        .catch(() => undefined);
     });
     if (!S.key) $.ui.log('jev-governor: no OpenRouter key found; routing is off until one is set (/jevg status).');
   } catch (error) {
@@ -2189,6 +2388,7 @@ export const register: Register = (on) => {
     }
     if (sub === 'chat' || sub === 'idle') return { text: await chatCommand($, sub, raw.slice(sub.length).trim().toLowerCase()) };
     if (sub === 'memory') return { text: await memoryCommand($, raw.slice(sub.length).trim().toLowerCase()) };
+    if (sub === 'agents') return { text: await agentsCommand($, raw.slice(sub.length).trim().toLowerCase()) };
     if (arg === 'ui') return { text: await startUi($) };
     if (arg === 'reload') {
       await loadConfig($, true);

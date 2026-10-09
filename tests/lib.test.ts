@@ -8,8 +8,12 @@ import {
   agentQuestion,
   composePrompt,
   NONE,
+  applyMerge,
   parseDraft,
+  parseMerge,
+  pickedAgent,
   rankCandidates,
+  resolveAgent,
   sanitizeAgent,
   uniqueName,
   withRolePreamble,
@@ -174,23 +178,103 @@ describe('registry', () => {
     expect(composed).toBe('Do the thing.\n\n## Skill: cargo-offline\nUse --offline.');
   });
 
-  it('parses a drafted agent, reusing and creating skills, with unique names', () => {
+  it('parses a drafted agent, reusing and creating skills; an existing name or skill name is that one, not a copy', () => {
     const existingSkill: SkillRecord = { name: 'cargo-offline', description: 'd', body: 'b', origin: 'auto', createdAt: NOW, updatedAt: NOW };
-    const reply = 'Here:\n```json\n' +
+    const draft = (name: string, newSkills: { name: string; description: string; body: string }[]) =>
       JSON.stringify({
-        name: 'Rust Test Fixer',
+        name,
         description: 'Use for failing Rust tests.',
         prompt: 'You fix failing Rust tests. Reproduce, find root cause, fix, rerun. Report the cause and diff.',
         tools: ['Read', 'Bash', 'Edit', 'Teleport'],
         reuse_skills: ['cargo-offline', 'nope'],
-        new_skills: [{ name: 'fastdev crates', description: 'Crate layout', body: 'Run tests per crate with -p.' }],
-      }) + '\n```';
-    const parsed = parseDraft(reply, { agents: new Set(['rust-test-fixer']), skills: new Map([[existingSkill.name, existingSkill]]) }, NOW);
-    expect(parsed?.agent.name).toBe('rust-test-fixer-2');
-    expect(parsed?.agent.tools).toEqual(['Read', 'Bash', 'Edit']);
-    expect(parsed?.agent.skills).toEqual(['cargo-offline', 'fastdev-crates']);
-    expect(parsed?.skills.map((s) => s.name)).toEqual(['fastdev-crates']);
+        new_skills: newSkills,
+      });
+    const existing = { agents: new Set(['rust-test-fixer']), skills: new Map([[existingSkill.name, existingSkill]]) };
+    const fresh = parseDraft(
+      'Here:\n```json\n' + draft('Rust Flaky Test Fixer', [{ name: 'fastdev crates', description: 'Crate layout', body: 'Run tests per crate with -p.' }]) + '\n```',
+      existing,
+      NOW,
+    );
+    if (!fresh || !('agent' in fresh)) throw new Error('expected a new agent');
+    expect(fresh.agent.name).toBe('rust-flaky-test-fixer');
+    expect(fresh.agent.tools).toEqual(['Read', 'Bash', 'Edit']);
+    expect(fresh.agent.skills).toEqual(['cargo-offline', 'fastdev-crates']);
+    expect(fresh.skills.map((s) => s.name)).toEqual(['fastdev-crates']);
+
+    // Drafted under an existing name, or told to reuse: that agent, no `-2`.
+    expect(parseDraft(draft('Rust Test Fixer', []), existing, NOW)).toEqual({ reuse: 'rust-test-fixer' });
+    expect(parseDraft('{"reuse": "rust-test-fixer"}', existing, NOW)).toEqual({ reuse: 'rust-test-fixer' });
+    expect(parseDraft('{"reuse": "unknown-agent"}', existing, NOW)).toBeUndefined();
+
+    // A "new" skill under an existing skill's name is that skill (a merged one leads to what it was merged into).
+    const merged: SkillRecord = { ...existingSkill, name: 'cargo-offline-2', mergedInto: 'cargo-offline' };
+    const sameSkill = parseDraft(
+      draft('Rust Bench Runner', [{ name: 'Cargo Offline 2', description: 'again', body: 'Use --offline.' }]),
+      { agents: existing.agents, skills: new Map([[existingSkill.name, existingSkill], [merged.name, merged]]) },
+      NOW,
+    );
+    if (!sameSkill || !('agent' in sameSkill)) throw new Error('expected a new agent');
+    expect(sameSkill.agent.skills).toEqual(['cargo-offline']);
+    expect(sameSkill.skills).toEqual([]);
     expect(parseDraft('no json here', { agents: new Set(), skills: new Map() }, NOW)).toBeUndefined();
+  });
+
+  it('picks the likeliest specialist, also when near-copies split the vote, and follows merges', () => {
+    expect(pickedAgent({ choice: 'a', probabilities: { a: 0.7, none: 0.3 } }, 0.6)).toBe('a');
+    expect(pickedAgent({ choice: 'a', probabilities: { a: 0.4, b: 0.35, none: 0.25 } }, 0.6)).toBe('a');
+    expect(pickedAgent({ choice: 'a', probabilities: { a: 0.3, b: 0.2, none: 0.5 } }, 0.6)).toBeUndefined();
+    expect(pickedAgent({ choice: 'none', probabilities: { a: 0.3, b: 0.3, none: 0.4 } }, 0.6)).toBeUndefined();
+    expect(pickedAgent(undefined, 0.6)).toBeUndefined();
+    const agents = new Map<string, AgentRecord>([
+      ['old', { ...agent('old', 'd'), enabled: false, mergedInto: 'mid' }],
+      ['mid', { ...agent('mid', 'd'), enabled: false, mergedInto: 'new' }],
+      ['new', agent('new', 'd')],
+      ['off', { ...agent('off', 'd'), enabled: false }],
+    ]);
+    expect(resolveAgent(agents, 'old')?.name).toBe('new');
+    expect(resolveAgent(agents, 'off')).toBeUndefined();
+  });
+
+  it('ranks by rare shared words, stems and the title', () => {
+    const agents = [
+      agent('web-market-researcher', 'Use to research current markets, standards, APIs and regulations from dated web sources'),
+      agent('markdown-doc-translator', 'Use to translate markdown docs into another language, keeping structure'),
+      agent('rust-diff-reviewer', 'Use to review uncommitted Rust changes against explicit behavior rules'),
+    ];
+    const ranked = rankCandidates(agents, 'Find the official docs, pricing and limits of these APIs. Write the docs to a file.', 3, 'Research Runway, Luma, Kling APIs');
+    expect(ranked[0]?.name).toBe('web-market-researcher');
+  });
+
+  it('folds near-copies: the kept one takes skills, tools and runs; the rest are off with mergedInto', () => {
+    const skill = (name: string, origin: 'auto' | 'manual' = 'auto'): SkillRecord => ({ name, description: 'd', body: 'b', origin, createdAt: NOW, updatedAt: NOW });
+    const agents = new Map<string, AgentRecord>([
+      ['packet-judge', { ...agent('packet-judge', 'Judges packets'), skills: ['judging'], tools: ['Read'], uses: 3, lastUsedAt: '2026-10-07T00:00:00Z' }],
+      ['packet-judge-2', { ...agent('packet-judge-2', 'Judges packets v2'), skills: ['judging-2', 'scoring'], tools: ['Read', 'Write'], uses: 1, lastUsedAt: '2026-10-08T00:00:00Z' }],
+      ['my-judge', { ...agent('my-judge', 'Mine'), origin: 'manual' }],
+      ['translator', { ...agent('translator', 'Translates'), skills: ['judging-2'] }],
+    ]);
+    const skills = new Map([['judging', skill('judging')], ['judging-2', skill('judging-2')], ['scoring', skill('scoring')], ['mine', skill('mine', 'manual')]]);
+    const reply = JSON.stringify({
+      agents: [
+        { keep: 'packet-judge', merge: ['packet-judge-2', 'my-judge', 'ghost', 'packet-judge'], description: 'Judges any packet version', prompt: null },
+        { keep: 'packet-judge-2', merge: ['translator'] },
+      ],
+      skills: [{ keep: 'judging', merge: ['judging-2', 'mine'] }],
+    });
+    const plan = parseMerge(reply, agents, skills);
+    // A manual agent or skill is never merged away; a name is in one group at most.
+    expect(plan).toEqual({
+      agents: [{ keep: 'packet-judge', merge: ['packet-judge-2'], description: 'Judges any packet version' }],
+      skills: [{ keep: 'judging', merge: ['judging-2'] }],
+    });
+    const out = applyMerge(plan!, agents, skills, NOW);
+    const by = new Map(out.agents.map((a) => [a.name, a]));
+    expect(by.get('packet-judge')).toMatchObject({ description: 'Judges any packet version', skills: ['judging', 'scoring'], tools: ['Read', 'Write'], uses: 4, lastUsedAt: '2026-10-08T00:00:00Z', enabled: true });
+    expect(by.get('packet-judge-2')).toMatchObject({ enabled: false, mergedInto: 'packet-judge' });
+    expect(by.get('translator')?.skills).toEqual(['judging']);
+    expect(by.has('my-judge')).toBe(false);
+    expect(out.skills).toEqual([{ ...skills.get('judging-2')!, mergedInto: 'judging', updatedAt: NOW }]);
+    expect(parseMerge('nothing', agents, skills)).toBeUndefined();
   });
 
   it('puts the role, skills and tool list in front of the task', () => {

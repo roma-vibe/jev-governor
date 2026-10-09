@@ -21,11 +21,11 @@ import { parseLang, setFallbackLang, tr, withLang } from './lib/i18n.ts';
 import { jevAsker, noul, type HttpLike } from '../hooks/lib/jev.ts';
 import { LIMITS, NAME_RE, sanitizeAgent, sanitizeSkill, uniqueName } from '../hooks/lib/registry.ts';
 import { computeSavings, familyOf, usageCost, type SavingEvent, type SavingSource, type SavingsOptions } from '../hooks/lib/savings.ts';
-import type { AgentRecord, DraftRecord, GovernorConfig, LedgerEntry, SkillRecord } from '../hooks/lib/types.ts';
+import type { AgentRecord, DraftRecord, GovernorConfig, LedgerEntry, MergeRequest, SkillRecord } from '../hooks/lib/types.ts';
 import { pricable } from './lib/pricable.ts';
 import { createProjects, entriesOfProject } from './lib/projects.ts';
 
-const VERSION = '0.3.6';
+const VERSION = '0.3.7';
 const UI_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(UI_DIR);
 const DIST = path.join(UI_DIR, 'dist');
@@ -519,7 +519,8 @@ function computeStats(entries: readonly LedgerEntry[], days: number): LedgerStat
       }
     } else if (e.kind === 'error') {
       stats.errors++;
-    } else if (e.kind === 'agent-created') {
+    } else if (e.kind === 'agent-created' && e.change === undefined) {
+      // A merge or a retirement is logged under the same kind: only new specialists count.
       stats.agentsCreated++;
     }
   }
@@ -670,9 +671,27 @@ async function agentStats() {
   return stats;
 }
 
+/** Agents with their runs: a merged agent's runs count for the one it was merged into too. Merged ones last. */
 async function listAgents() {
   const [agents, stats] = await Promise.all([readAgents(), agentStats()]);
-  return agents.map((agent) => ({ ...agent, stats: stats.get(agent.name) ?? { uses: 0, lastUsedAt: null } }));
+  const byName = new Map(agents.map((a) => [a.name, a]));
+  const target = (name: string): string => {
+    let agent = byName.get(name);
+    for (let hops = 0; agent?.mergedInto !== undefined && hops < 8; hops++) agent = byName.get(agent.mergedInto) ?? agent;
+    return agent?.name ?? name;
+  };
+  const folded = new Map<string, { uses: number; lastUsedAt: string | null }>();
+  for (const [name, s] of stats) {
+    for (const key of new Set([name, target(name)])) {
+      const f = folded.get(key) ?? { uses: 0, lastUsedAt: null };
+      f.uses += s.uses;
+      if (s.lastUsedAt && (!f.lastUsedAt || s.lastUsedAt > f.lastUsedAt)) f.lastUsedAt = s.lastUsedAt;
+      folded.set(key, f);
+    }
+  }
+  return agents
+    .map((agent) => ({ ...agent, stats: folded.get(agent.name) ?? { uses: 0, lastUsedAt: null } }))
+    .sort((a, b) => Number(a.mergedInto !== undefined) - Number(b.mergedInto !== undefined));
 }
 
 async function listSkills() {
@@ -705,6 +724,11 @@ async function updateAgent(name: string, body: Json): Promise<AgentRecord> {
   if (!existing) throw new HttpError(404, tr(`Agent “${name}” not found.`, `Агент «${name}» не найден.`));
   const merged: Json = { ...existing, ...body };
   if (typeof body.name !== 'string') merged.name = name;
+  // Turned back on by hand: no longer merged into another or retired by the mod.
+  if (body.enabled === true) {
+    delete merged.mergedInto;
+    delete merged.retiredAt;
+  }
   const skills = new Set((await readSkills()).map((s) => s.name));
   checkAgentBody(merged, skills);
   const now = nowIso();
@@ -844,6 +868,28 @@ async function acceptDraft(id: string, body: Json): Promise<{ agent: AgentRecord
   await writeJson(agentFile(agent.name), agent);
   await fs.rm(draftFile(id), { force: true });
   return { agent, skills };
+}
+
+// ----------------------------------------------------------------- merge --
+
+const mergeFile = () => path.join(DATA, 'merge.json');
+
+/** The last merge request as stored (the mod fills `result`), without the mod's `worker` field. */
+async function readMerge(): Promise<Json | null> {
+  const request = await readJson(mergeFile());
+  if (!isObject(request)) return null;
+  const { worker: _worker, ...rest } = request;
+  return rest;
+}
+
+/** Asks the mod (in any running session) to fold near-copy agents together; one request at a time. */
+async function requestMerge(): Promise<Json> {
+  const current = await readMerge();
+  if (current && (current.status === 'pending' || current.status === 'working')) return current;
+  const now = nowIso();
+  const request: MergeRequest = { status: 'pending', createdAt: now, updatedAt: now };
+  await writeJson(mergeFile(), request);
+  return request;
 }
 
 // -------------------------------------------------------------- projects --
@@ -992,6 +1038,12 @@ async function api(req: IncomingMessage, res: ServerResponse, segments: string[]
       await mutate(() => deleteSkill(id));
       return send(res, 200, { ok: true });
     }
+    return notFound();
+  }
+
+  if (resource === 'merge' && !id) {
+    if (method === 'GET') return send(res, 200, (await readMerge()) ?? { status: 'none' });
+    if (method === 'POST') return send(res, 202, await mutate(() => requestMerge()));
     return notFound();
   }
 

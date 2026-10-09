@@ -6,6 +6,7 @@ import type {
   GovernorConfig,
   LedgerEntry,
   LedgerKind,
+  MergeRequest,
   ProjectCommandRecord,
   ProjectRecord,
   SkillRecord,
@@ -14,6 +15,8 @@ import type { SavingEvent, SavingSource, SavingsReport } from '../../hooks/lib/s
 import { lang, t } from './i18n/index.ts';
 
 export type AgentView = AgentRecord & { stats: { uses: number; lastUsedAt: string | null } };
+/** The last request to fold near-copy agents together; `none` when there was none. */
+export type MergeRecord = MergeRequest | { status: 'none' };
 export type SkillView = SkillRecord & { usedBy: string[] };
 export type KeyStatus = {
   found: boolean;
@@ -253,6 +256,8 @@ export const api = {
   updateSkill: (name: string, patch: Partial<SkillInput>) => send<SkillRecord>('PUT', `/api/skills/${seg(name)}`, patch),
   deleteSkill: (name: string) => send<{ ok: true }>('DELETE', `/api/skills/${seg(name)}`),
 
+  merge: () => get<MergeRecord>('/api/merge', true),
+  requestMerge: () => send<MergeRecord>('POST', '/api/merge'),
   createDraft: (description: string) => send<DraftRecord>('POST', '/api/drafts', { description }),
   draft: (id: string, quiet = true) => get<DraftRecord>(`/api/drafts/${seg(id)}`, quiet),
   deleteDraft: (id: string) => send<{ ok: true }>('DELETE', `/api/drafts/${seg(id)}`),

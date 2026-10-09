@@ -72,7 +72,7 @@ async function remove(skill: SkillView): Promise<void> {
     <p v-else-if="skills.length === 0" class="card text-sm text-zinc-600 dark:text-zinc-300">{{ t('No skills yet.') }}</p>
 
     <ul class="grid gap-4 lg:grid-cols-2">
-      <li v-for="skill in skills" :key="skill.name" class="card flex flex-col gap-3">
+      <li v-for="skill in skills" :key="skill.name" class="card flex flex-col gap-3" :class="skill.mergedInto ? 'opacity-70' : ''">
         <div>
           <h3 class="mono truncate text-sm font-semibold" :title="skill.name">{{ skill.name }}</h3>
           <div class="mt-1 flex flex-wrap gap-1.5">
@@ -80,6 +80,7 @@ async function remove(skill: SkillView): Promise<void> {
               {{ skill.origin === 'auto' ? t('auto') : t('manual') }}
             </span>
             <span class="badge badge-gray tabular-nums">{{ t('{n} chars', { n: skill.body.length }) }}</span>
+            <span v-if="skill.mergedInto" class="badge badge-gray">{{ t('merged into {name}', { name: skill.mergedInto }) }}</span>
           </div>
         </div>
         <p class="text-sm">{{ skill.description }}</p>
