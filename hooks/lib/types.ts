@@ -263,7 +263,9 @@ export type GovernorConfig = {
      * facts, usually none. Needs a memory that answers; not in excluded projects or shadow mode.
      */
     autoSave: boolean;
+    /** Reads the dialog (the bulk of the tokens) / checks the few candidates it offers (needs the better judgement). */
     autoSaveModel: string;
+    autoSaveCheckModel: string;
     autoSaveEveryTurns: number;
     autoSaveIdleMinutes: number;
     autoSaveMaxFacts: number;

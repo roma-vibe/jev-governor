@@ -434,6 +434,14 @@ export default {
     "Сохранять факты из диалога",
   "The mod reads what you typed and the model answered (never tool output) every few turns and after a quiet stretch, and saves the few durable facts in it: decisions and their reasons, conventions, traps. A second pass drops the doubtful ones; most readings save nothing. Saved facts carry the tag auto. /jevg memory save does it now.":
     "Мод читает то, что вы писали и что отвечала модель (вывод инструментов не читается), раз в несколько ходов и после паузы, и сохраняет немногие долгие факты: решения и их причины, правила, ловушки. Второй проход отбрасывает сомнительные; чаще всего сохранять нечего. У сохранённых фактов тег auto. /jevg memory save делает это сразу.",
+  "Model that reads the dialog":
+    "Модель, читающая диалог",
+  "Reads the turns (most of the tokens) and offers facts. Haiku 5.5 is enough: the checking pass below filters its mistakes.":
+    "Читает ходы (основная часть токенов) и предлагает факты. Haiku 5.5 достаточно: проверяющий проход ниже отсеет её ошибки.",
+  "Model that checks the facts":
+    "Модель, проверяющая факты",
+  "Sees only the few offered facts and decides which to keep, so the better model costs little here. Runs only when something was offered.":
+    "Видит только немногие предложенные факты и решает, какие оставить, поэтому лучшая модель стоит здесь мало. Работает, только если что-то предложено.",
   "Read the dialog every":
     "Читать диалог каждые",
   "Read after a quiet stretch of":

@@ -690,6 +690,20 @@ export function getSections(): Section[] {
           help: t('The mod reads what you typed and the model answered (never tool output) every few turns and after a quiet stretch, and saves the few durable facts in it: decisions and their reasons, conventions, traps. A second pass drops the doubtful ones; most readings save nothing. Saved facts carry the tag auto. /jevg memory save does it now.'),
         },
         {
+          path: 'memory.autoSaveModel',
+          label: t('Model that reads the dialog'),
+          kind: 'text',
+          mono: true,
+          help: t('Reads the turns (most of the tokens) and offers facts. Haiku 5.5 is enough: the checking pass below filters its mistakes.'),
+        },
+        {
+          path: 'memory.autoSaveCheckModel',
+          label: t('Model that checks the facts'),
+          kind: 'text',
+          mono: true,
+          help: t('Sees only the few offered facts and decides which to keep, so the better model costs little here. Runs only when something was offered.'),
+        },
+        {
           path: 'memory.autoSaveEveryTurns',
           label: t('Read the dialog every'),
           kind: 'number',

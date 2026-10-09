@@ -2059,15 +2059,15 @@ async function saveFromDialog($: EngineInterface, why: 'turns' | 'idle' | 'manua
     const clean = (text: string): string => redact(text).text;
     const built = extractPrompt({ project: S.cwd.split('/').filter(Boolean).pop() ?? '', turns: unread, summary, known, maxFacts: m.autoSaveMaxFacts, clean });
     turnsRead = built.used.length;
-    const ask = async (system: string, prompt: string, effort: 'low' | 'medium'): Promise<string | undefined> => {
-      const reply = await $.model.complete({ model: m.autoSaveModel, system, prompt, maxTokens: 1500, effort, timeoutMs: 90_000 });
+    const ask = async (model: string, system: string, prompt: string, effort: 'low' | 'medium'): Promise<string | undefined> => {
+      const reply = await $.model.complete({ model, system, prompt, maxTokens: 1500, effort, timeoutMs: 90_000 });
       if (!reply.isAnswered) {
         await ledger($, { kind: 'memory', memory: { action: 'extract', for: why, ok: false, error: clip(`model call failed: ${reply.reason}`, 200) } });
         return undefined;
       }
       return reply.text;
     };
-    const reply = await ask(extractSystem(m.autoSaveMaxFacts), built.prompt, 'medium');
+    const reply = await ask(m.autoSaveModel, extractSystem(m.autoSaveMaxFacts), built.prompt, 'medium');
     if (reply === undefined) {
       S.memory.saveFailUntil = Date.now() + AUTOSAVE_RETRY_MS;
       return none(L('Модель не ответила.', 'The model did not answer.'), false);
@@ -2076,7 +2076,7 @@ async function saveFromDialog($: EngineInterface, why: 'turns' | 'idle' | 'manua
     const offered = candidates.length;
     if (candidates.length > 0) {
       const list = candidates.map((c, i) => `${i}. [${c.scope}/${c.type}] ${c.text}`).join('\n');
-      const verdict = await ask(CRITIC_SYSTEM, `${built.prompt.split('Answer with JSON only')[0]}\nCandidate facts:\n${list}\n\nAnswer with JSON only.`, 'medium');
+      const verdict = await ask(m.autoSaveCheckModel, CRITIC_SYSTEM, `${built.prompt.split('Answer with JSON only')[0]}\nCandidate facts:\n${list}\n\nAnswer with JSON only.`, 'medium');
       if (verdict === undefined) {
         S.memory.saveFailUntil = Date.now() + AUTOSAVE_RETRY_MS;
         return none(L('Проверяющий проход не ответил: ничего не сохранено, ходы прочитаны будут снова.', 'The checking pass did not answer: nothing saved, the turns will be read again.'), false);

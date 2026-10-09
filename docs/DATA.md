@@ -230,5 +230,5 @@ into input, output, cache reads and cache writes.
   subagents would have cost on Haiku.
 - `memory` (0.3.5): `enabled` (false), `server` (`mnema-memory`, the MCP server's name), `autoStart` (true),
   `startCommand` (empty: `scripts/mnema-local.sh start`), `recallOnStart` (true), `recallForSubagents` (true),
-  `subagentMinChars` (200), `saveOnHandoff` (true), `autoSave` (true, 0.3.10), `autoSaveModel` (`claude-sonnet-5-5`), `autoSaveEveryTurns` (6), `autoSaveIdleMinutes` (3), `autoSaveMaxFacts` (3), `modelTools` (true), `modelRecall` (false), `maxChars` (2500), `maxFacts` (12),
+  `subagentMinChars` (200), `saveOnHandoff` (true), `autoSave` (true, 0.3.10), `autoSaveModel` (`claude-haiku-5-5`, reads the dialog), `autoSaveCheckModel` (`claude-sonnet-5-5`, checks the few candidates), `autoSaveEveryTurns` (6), `autoSaveIdleMinutes` (3), `autoSaveMaxFacts` (3), `modelTools` (true), `modelRecall` (false), `maxChars` (2500), `maxFacts` (12),
   `timeoutMs` (2500). See README, "Long-term memory".
