@@ -1235,6 +1235,21 @@ describe('jev-governor hooks against a fake engine', () => {
     const ledgerOf = (id: string): Record<string, any>[] =>
       [...files.entries()].filter(([p]) => p.endsWith(`${id}.jsonl`)).flatMap(([, t]) => t.split('\n').filter(Boolean).map((l) => JSON.parse(l)));
 
+    it('on: a memory server still connecting is waited for, not given up on for the chat', async () => {
+      await setMemory({ enabled: true });
+      let attempts = 0;
+      mcpReply = async () => {
+        if (++attempts <= 2) throw new Error('$.mcp.call: no connected MCP tool "recall" on a server named "mnema-memory"');
+        return FACTS;
+      };
+      await startSession('mem-connecting');
+      sessionTurns = 0;
+      const result = await emit('prompt.submit', { text: 'почини падающий тест в модуле оплаты' });
+      expect(attempts).toBe(3);
+      expect(result.context).toHaveLength(1);
+      expect(ledgerOf('mem-connecting').find((e) => e.kind === 'memory')).toMatchObject({ memory: { action: 'recall', ok: true, facts: 1 } });
+    });
+
     it('off: no recall, and the model is refused the memory tools', async () => {
       await setMemory({ enabled: false });
       await startSession('mem-off');

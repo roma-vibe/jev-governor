@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isMemoryTool, looksDown, memoryBlock, parseRecall, recallTask, sessionSummary } from '../hooks/lib/memory.ts';
+import { isMemoryTool, looksDown, memoryBlock, parseRecall, recallTask, sessionSummary, stillConnecting } from '../hooks/lib/memory.ts';
 
 // The text mnema-mcp's recall renders (render.recall), as the engine passes it.
 const RECALL_TEXT = `# Memory for: how is the router configured
@@ -61,6 +61,13 @@ describe('parseRecall', () => {
   it('turns a failed call into an error and nothing else', () => {
     const notes = parseRecall({ content: [{ type: 'text', text: 'Cannot reach the memory service' }], isError: true });
     expect(notes).toEqual({ facts: [], questions: [], errors: ['Cannot reach the memory service'] });
+  });
+});
+
+describe('stillConnecting', () => {
+  it('tells a server whose tools are not registered yet from one that is down', () => {
+    expect(stillConnecting('jev-governor: $.mcp.call: no connected MCP tool "recall" on a server named "mnema-memory"')).toBe(true);
+    expect(stillConnecting('Cannot reach the memory service: connection refused')).toBe(false);
   });
 });
 

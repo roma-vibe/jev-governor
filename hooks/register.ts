@@ -37,7 +37,7 @@ import { resolveLang, systemLocales } from './lib/lang.ts';
 import { expandHome, isExcluded, resolveConfig } from './lib/config.ts';
 import { clip, estimateContextTokens, recentHistory, type HistoryMessage } from './lib/history.ts';
 import { choice, jevAsker, noul, withTimeout, type JevAsker, type JevQuestions, type JevResponse } from './lib/jev.ts';
-import { isMemoryTool, looksDown, memoryBlock, parseRecall, recallTask, resultText as memoryText, sessionSummary, type RecallResult } from './lib/memory.ts';
+import { isMemoryTool, looksDown, memoryBlock, parseRecall, recallTask, resultText as memoryText, sessionSummary, stillConnecting, type RecallResult } from './lib/memory.ts';
 import { displayModel } from './lib/providers.ts';
 import { redact } from './lib/redact.ts';
 import { chunkQuestions, isClaudeSavedOutput, isLogCandidate, isRunnerCommand, LOG_KEY_LINES, logQuestion, persistedOutputPath, MIN_TRIM_GAIN, planTrim, renderTrim, trimKind, worthTrimming, type Chunk } from './lib/trim.ts';
@@ -1877,7 +1877,8 @@ async function callMemory($: EngineInterface, tool: string, args: Record<string,
         message = errorText(again);
       }
     }
-    S.memory.downUntil = Date.now() + MEMORY_RETRY_MS;
+    // A server still connecting is not down: no pause, the next ask may find it.
+    if (!stillConnecting(message)) S.memory.downUntil = Date.now() + MEMORY_RETRY_MS;
     S.memory.lastError = clip(message, 200);
     throw new Error(S.memory.lastError);
   }
@@ -1925,7 +1926,13 @@ async function withRecall<E extends { text: string; context?: readonly string[] 
   const task = recallTask(e.text);
   if (!task) return e;
   S.memory.recalledFor = S.session;
-  const recalled = await recallNotes($, task);
+  let recalled = await recallNotes($, task);
+  // The memory's MCP server connects while the first prompt is typed; its tools may not be there
+  // yet. Wait a few seconds for it rather than lose the chat's recall (it is asked once).
+  for (let i = 0; i < 4 && recalled.error && stillConnecting(recalled.error); i++) {
+    await $.clock.sleep(1000);
+    recalled = await recallNotes($, task);
+  }
   const add = recalled.block && !shadow();
   await ledger($, { kind: 'memory', scope: 'main', applied: !shadow(), text: clip(task, 160), memory: memoryEntry(recalled, 'prompt') });
   if (add && recalled.block!.facts > 0) {

@@ -162,6 +162,14 @@ export function looksDown(message: string): boolean {
   return /cannot reach|connection (refused|reset|error|closed)|ECONNREFUSED|unreachable|timed? ?out|did not answer in time|not running|no route|not connected|unknown (mcp )?server/i.test(message);
 }
 
+/**
+ * Whether a failure means the memory server's tools are not registered yet: the MCP server is
+ * still connecting in a chat that has just started. Not an outage; asking again in a moment works.
+ */
+export function stillConnecting(message: string): boolean {
+  return /no connected MCP tool/i.test(message);
+}
+
 /** A session summary to save from a handoff brief: the brief itself, clipped to what the server takes. */
 export function sessionSummary(brief: string, title: string, maxChars = 8_000): string | undefined {
   const text = brief.trim();
