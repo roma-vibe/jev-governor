@@ -114,6 +114,9 @@ The "cache went cold" hint has been off by default since 0.2.6
 - `compaction.archive` (true) — archive and links during compaction.
 - `handoff.enabled` (true), `handoff.maxTokens` (14000),
   `handoff.brief` (`auto` | `always` | `never`), `handoff.briefWords` (350),
+  `handoff.briefVia` (`fork` | `turn`, 0.3.11: `fork` asks the brief with `$.model.fork`, a question
+  over this chat's cached context that adds nothing to the chat and takes no turn; `turn` is the
+  visible turn of earlier versions),
   `handoff.useJev` (true), `handoff.suggestAtTokens` (150000),
   `handoff.suggestAt` (0.8), `handoff.suggestColdAtTokens` (0, off),
   `handoff.keepDays` (30).

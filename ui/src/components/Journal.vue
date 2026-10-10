@@ -26,6 +26,7 @@ const kinds = computed<{ value: LedgerKind | ''; label: string }[]>(() => [
   { value: 'rerun-after-prune', label: t('rerun-after-prune: rerun of what compaction removed') },
   { value: 'redacted', label: t('redacted: secrets removed from requests to Jev') },
   { value: 'window', label: t('window: auto-compaction window per session') },
+  { value: 'tools', label: t('tools: long unused tools behind ToolSearch') },
   { value: 'error', label: t('error: errors') },
 ]);
 
@@ -281,6 +282,8 @@ function details(e: LedgerEntry): string {
       ]
         .filter(Boolean)
         .join(' · ');
+    case 'tools':
+      return e.tools ? t('{n} characters out of every request: {names}', { n: fmtNum(e.tools.chars), names: e.tools.deferred.join(', ') }) : '';
     case 'error':
       return e.error ?? '';
   }

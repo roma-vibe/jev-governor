@@ -13,6 +13,7 @@ import { DEFAULT_CONFIG, isExcluded, isShadow } from '../lib/config.ts';
 import type { Lang } from '../lib/lang.ts';
 import { displayModel } from '../lib/providers.ts';
 import { DEFAULT_TURN, type Decision, type Signals, type TurnProfile } from '../lib/router.ts';
+import type { ToolUse } from '../lib/tools.ts';
 import type { AgentRecord, Effort, GovernorConfig, LedgerEntry, SkillRecord, Tier } from '../lib/types.ts';
 
 export type Route = {
@@ -32,6 +33,8 @@ export type Route = {
   turnProfile?: TurnProfile;
   /** The session's own effort at the last main turn (detects the person changing it). */
   lastBaseEffort?: string;
+  /** Main turns run since the main model last changed tier (absent: none seen yet). */
+  turnsOnModel?: number;
 };
 
 export type Rate = { fiveHour?: number; sevenDay?: number };
@@ -103,6 +106,14 @@ export type SubState = {
 export type PendingSpawn = { promptKey: string; sub: SubState; at: number };
 
 export const S = {
+  /** When each tool was last called (store `tool-use`, shared by all chats); loaded on first need. */
+  toolUse: undefined as ToolUse | undefined,
+  /**
+   * Each tool's placement as first answered in this process, never changed after: a tool list that
+   * changes mid-chat rewrites the prompt cache and drops the reasoning kept so far.
+   */
+  toolDefer: new Map<string, { defer: boolean; chars: number }>(),
+  toolDeferLogged: false,
   cfg: DEFAULT_CONFIG as GovernorConfig,
   cfgMtime: -1,
   /** Language of the mod's messages (`ui.language`, 'auto' resolved). */

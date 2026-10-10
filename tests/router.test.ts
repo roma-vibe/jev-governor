@@ -72,6 +72,21 @@ describe('decideMain', () => {
     expect(decideMain(mid, { ...base, currentTier: 'standard', freeSwitch: true }, cfg).tier).toBe('strong');
   });
 
+  it('settles after a switch: no switch back on a warm cache for settleTurns turns, unless clear or risky', () => {
+    const easy = signals({ pStrong: 0.05 });
+    const small = { ...base, contextTokens: 10_000 };
+    const settling = decideMain(easy, { ...small, currentTier: 'strong', turnsSinceSwitch: 1 }, cfg);
+    expect(settling.tier).toBe('strong');
+    expect(settling.reasons.join()).toContain('settling');
+    expect(decideMain(easy, { ...small, currentTier: 'strong', turnsSinceSwitch: 3 }, cfg).tier).toBe('standard');
+    // After a compaction (cache cold, reasoning summarized) there is nothing to lose.
+    expect(decideMain(easy, { ...small, currentTier: 'strong', turnsSinceSwitch: 0, freeSwitch: true }, cfg).tier).toBe('standard');
+    // A moderate upgrade waits; a clear one or a risky task does not.
+    expect(decideMain(signals({ pStrong: 0.65 }), { ...small, currentTier: 'standard', turnsSinceSwitch: 1 }, cfg).tier).toBe('standard');
+    expect(decideMain(signals({ pStrong: 0.97 }), { ...small, currentTier: 'standard', turnsSinceSwitch: 1 }, cfg).tier).toBe('strong');
+    expect(decideMain(signals({ pStrong: 0.65, risky: 0.9 }), { ...small, currentTier: 'standard', turnsSinceSwitch: 1 }, cfg).tier).toBe('strong');
+  });
+
   it('never moves a context too large for sonnet', () => {
     const easy = signals({ pStrong: 0.0 });
     const d = decideMain(easy, { ...base, currentTier: 'strong', freeSwitch: true, contextTokens: 400_000 }, cfg);

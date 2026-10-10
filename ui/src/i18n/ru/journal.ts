@@ -20,6 +20,8 @@ export default {
   'threshold': 'порог',
   'mid-turn window': 'окно посреди хода',
   'window: auto-compaction window per session': 'window: окно автосжатия в сессии',
+  'tools: long unused tools behind ToolSearch': 'tools: длинные неиспользуемые инструменты за ToolSearch',
+  '{n} characters out of every request: {names}': '{n} символов убрано из каждого запроса: {names}',
   'Claude Code measures against {n}': 'Claude Code считает от {n}',
   'source {source}': 'источник {source}',
   'on return': 'при возвращении',

@@ -218,6 +218,17 @@ into input, output, cache reads and cache writes.
 - `excludeProjects` — paths whose sessions send nothing to Jev.
 - `compaction.maxPruneRatio` (0.8), `compaction.resultPreviewChars` (150).
 - `router.expectedTurns` (4) — turns a move to Sonnet must pay back within.
+- `router.settleTurns` (3, 0.3.11) — after a model switch on a warm cache, no switch back for this many
+  turns: each switch rewrites the cache and drops the reasoning kept so far (Opus 5.5 and Sonnet 5.5
+  cannot read each other's thinking). A clear upgrade (P ≥ 0.8), a risky task, a critical budget or a
+  cold cache still switch.
+- `tools` (0.3.11): `deferIdle` (true), `deferAlso` (Artifact, Workflow, ReportFindings, ScheduleWakeup,
+  the plugin/skill suggestion tools, the iOS simulator, visualize, spawn/dismiss task), `keep` ([]),
+  `idleDays` (14), `minChars` (800). Every request carries the full text of each listed tool; one used
+  once in a hundred chats (Artifact's alone is ~5k tokens) is read from the cache at every step for
+  nothing. Such a tool goes behind ToolSearch; one called within `idleDays` stays listed. Calls are
+  counted in the store (`tool-use`, shared by all chats); placements are decided once per process,
+  never mid-chat (that would rewrite the cache). The `tools` ledger line lists what was deferred.
 - `handoff.suggestColdAtTokens` (300k) — suggest `/jevg fresh` when the cache
   of a context this large went cold.
 - `projects.enabled` — the whole project panel.

@@ -36,6 +36,14 @@ const seedConfig = (language: 'ru' | 'en'): void => {
   files.set(`${DATA}/config.json`, `${JSON.stringify({ ...cfg, ui: { ...cfg.ui, language } }, null, 2)}\n`);
 };
 seedConfig('ru');
+/** Sets one handoff option in the sim's config file (read again at the next turn or command). */
+const setHandoff = (patch: Record<string, unknown>): void => {
+  const cfg = JSON.parse(files.get(`${DATA}/config.json`)!);
+  files.set(`${DATA}/config.json`, JSON.stringify({ ...cfg, handoff: { ...cfg.handoff, ...patch } }));
+};
+/** `$.model.fork`: the prompts asked and the reply given (undefined: nothing to fork). */
+const forks: string[] = [];
+let forkReply: { isAnswered: boolean; text?: string; reason?: string } | undefined = { isAnswered: true, text: '**Goal** forked brief' };
 /** The process environment the mod sets (`$.env.set`); HOME is answered apart. */
 const env = new Map<string, string>();
 const logs: string[] = [];
@@ -222,6 +230,11 @@ const $ = {
   },
   agent: { register: async () => ({}) },
   model: {
+    fork: async (input: { prompt: string }) => {
+      forks.push(input.prompt);
+      if (!forkReply) return { isAnswered: false, reason: 'nothing-to-fork' };
+      return { ...forkReply, usage: { input_tokens: 10, output_tokens: 400, cache_read_input_tokens: 200_000, cache_creation_input_tokens: 0 } };
+    },
     // Drafting a specialist takes a while: parallel spawns overlap.
     complete: async (input: { system?: string; prompt?: string; model?: string }) => {
       if (input.system?.includes('maintain the long-term memory')) {
@@ -333,7 +346,42 @@ describe('jev-governor hooks against a fake engine', () => {
     expect(again.context).toBeUndefined();
   });
 
-  it('/jevg getctx --brief asks the chat for a brief and puts it in the capsule', async () => {
+  it('/jevg getctx --brief forks the chat for the brief: no turn, nothing added, the capsule carries it', async () => {
+    await startSession('fork-session');
+    messages = oldChat();
+    timers.length = 0;
+    submitted.length = 0;
+    forks.length = 0;
+    const started = await emit('command.run', { command: 'jevg', args: 'getctx --brief' }, async () => ({ text: '' }));
+    expect(started.text).toContain('в чат он не добавляется');
+    const before = logs.length;
+    for (const fn of timers.splice(0)) fn();
+    const made = (): string | undefined => logs.slice(before).find((l) => l.startsWith('Капсула '));
+    await until(() => made() !== undefined);
+    expect(submitted).toHaveLength(0);
+    expect(forks).toHaveLength(1);
+    expect(forks[0]).toContain('[jev-governor:getctx-brief]');
+    const id = /Капсула (\S+):/.exec(made()!)![1]!;
+    expect(files.get(`${DATA}/handoffs/${id}.md`)).toContain('## Brief from the previous chat\n\n**Goal** forked brief');
+    const ledger = [...files.entries()].filter(([p]) => p.endsWith('fork-session.jsonl')).map(([, t]) => t).join('');
+    expect(ledger).toContain('"briefVia":"fork"');
+    expect(ledger).toContain('"cacheRead":200000');
+
+    // Nothing to fork yet: for /jevg fresh nothing is cleared.
+    forkReply = undefined;
+    try {
+      const before2 = logs.length;
+      await emit('command.run', { command: 'jevg', args: 'fresh --brief' }, async () => ({ text: '' }));
+      for (const fn of timers.splice(0)) fn();
+      await until(() => logs.slice(before2).some((l) => l.includes('перенос отменён')));
+      expect(sessionId).toBe('fork-session');
+    } finally {
+      forkReply = { isAnswered: true, text: '**Goal** forked brief' };
+    }
+  });
+
+  it('/jevg getctx --brief with handoff.briefVia "turn" asks the chat for a brief and puts it in the capsule', async () => {
+    setHandoff({ briefVia: 'turn' });
     await startSession('brief-session');
     messages = oldChat();
     timers.length = 0;
@@ -358,6 +406,7 @@ describe('jev-governor hooks against a fake engine', () => {
     expect(capsule).toContain('## Brief from the previous chat\n\n**Goal** ship the capsule');
     // The brief request itself is not a turn of the capsule.
     expect(capsule).not.toContain('getctx-brief');
+    setHandoff({ briefVia: 'fork' });
   });
 
   it('a compaction archives what it prunes and points the history at it', async () => {
@@ -675,6 +724,7 @@ describe('jev-governor hooks against a fake engine', () => {
   });
 
   it('/jevg fresh: Esc on the brief stops it; a prompt typed meanwhile waits and goes in after the clear', async () => {
+    setHandoff({ briefVia: 'turn' });
     await startSession('fresh-esc');
     messages = oldChat();
     timers.length = 0;
@@ -708,6 +758,7 @@ describe('jev-governor hooks against a fake engine', () => {
     const entered = await emit('prompt.submit', { text: 'дальше: тесты для капсулы', origin: { kind: 'plugin' } });
     expect(entered.context?.[0]).toContain('# Context from a previous chat');
     expect(entered.context?.[0]).toContain('**Goal** fresh');
+    setHandoff({ briefVia: 'fork' });
   });
 
   it('/jevg fresh: a /clear that changed nothing attaches nothing and leaves the paste prompt', async () => {
@@ -1068,6 +1119,28 @@ describe('jev-governor hooks against a fake engine', () => {
     expect(ledger).toContain('"kind":"list"');
   });
 
+  it('puts long unused tools behind ToolSearch once per process, and records calls for the next chats', async () => {
+    await startSession('tools-session');
+    const describe = (tool: string, description: string, isDeferred?: true) =>
+      emit('tool.describe', { tool, description, ...(isDeferred ? { isDeferred } : {}), provider: { plugin: 'engine', tier: 'core' } }, async (x: { description: string }) => ({ description: x.description }));
+    const long = 'x'.repeat(5_000);
+    expect((await describe('Artifact', long)).isDeferred).toBe(true);
+    expect((await describe('Bash', long)).isDeferred).toBeUndefined();
+    expect((await describe('mcp__Claude_Browser__navigate', long)).isDeferred).toBeUndefined();
+    expect((await describe('ReportFindings', 'short')).isDeferred).toBeUndefined();
+    // Called now (through ToolSearch): recorded, yet this process keeps its placement (the cache).
+    await emit('tool.call', { tool: 'Artifact', tool_use_id: 'a1' }, async () => ({}));
+    await until(() => (store.get('tool-use') as { last?: Record<string, number> } | undefined)?.last?.Artifact !== undefined);
+    expect((await describe('Artifact', long)).isDeferred).toBe(true);
+    const step = handlers.get('turn.step')![0]!($, { turnId: 'tt1', model: 'claude-opus-5-5' }, async function* () {
+      return undefined;
+    }) as AsyncGenerator;
+    for await (const _ of step);
+    await until(() => [...files.entries()].some(([p, t]) => p.endsWith('tools-session.jsonl') && t.includes('"kind":"tools"')));
+    const ledger = [...files.entries()].filter(([p]) => p.endsWith('tools-session.jsonl')).map(([, t]) => t).join('');
+    expect(ledger.split("\n").find((l) => l.includes("\"kind\":\"tools\""))).toContain("\"deferred\":[\"Artifact\"]");
+  });
+
   it('with ui.language en the handoff and ctx replies are English', async () => {
     seedConfig('en');
     try {
@@ -1077,7 +1150,10 @@ describe('jev-governor hooks against a fake engine', () => {
       expect(made.text).toMatch(/^Capsule \S+: ~[\d.]+k? tokens instead of 412k in this chat/);
       expect(made.text).toContain('Open a new chat in this project and paste the prompt');
       const started = await emit('command.run', { command: 'jevg', args: 'getctx --brief' }, async () => ({ text: '' }));
-      expect(started.text).toContain("this chat's model will write a brief");
+      expect(started.text).toContain("This chat's model is writing a brief");
+      const before = logs.length;
+      for (const fn of timers.splice(0)) fn();
+      await until(() => logs.slice(before).some((l) => l.startsWith('Capsule ')));
       const listed = await emit('command.run', { command: 'jevg', args: 'ctx list' }, async () => ({ text: '' }));
       expect(listed.text).toContain('Capsules of this project (newest first):');
       expect(listed.text).toContain('attached 1×');

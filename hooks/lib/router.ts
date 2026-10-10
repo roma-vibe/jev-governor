@@ -242,6 +242,8 @@ export type MainContext = {
   previous?: { tier: Tier; effort: Effort };
   /** What a turn of this session usually spends (learned from its usage); defaults otherwise. */
   turnProfile?: TurnProfile;
+  /** Main turns since the model last changed tier (absent: no switch seen). */
+  turnsSinceSwitch?: number;
 };
 
 /** A typical main turn: tokens it outputs and newly writes to the cache. */
@@ -300,6 +302,9 @@ export function decideMain(signals: Signals, ctx: MainContext, config: GovernorC
   const cheap = ctx.freeSwitch || tokens <= r.cheapSwitchTokens;
   const where = ctx.freeSwitch ? 'cache cold' : cheap ? 'small context' : 'warm cache';
   const risky = signals.risky >= r.riskyAt && ctx.pressure < 3;
+  // Just switched, warm cache: switching back costs another rewrite and the reasoning in between.
+  const settling = !ctx.freeSwitch && ctx.turnsSinceSwitch !== undefined && ctx.turnsSinceSwitch < r.settleTurns;
+  const settled = `switched ${ctx.turnsSinceSwitch} turn(s) ago, settling for ${r.settleTurns}`;
   let tier: Tier = ctx.currentTier;
 
   if (ctx.currentTier === 'standard') {
@@ -308,8 +313,12 @@ export function decideMain(signals: Signals, ctx: MainContext, config: GovernorC
       tier = 'strong';
       reasons.push(`upgrade: P(opus)=${signals.pStrong.toFixed(2)}${risky ? ', risky' : ''} (${where})`);
     } else if (cheap && (signals.pStrong >= r.upgradeAt + up || risky)) {
-      tier = 'strong';
-      reasons.push(`upgrade: P(opus)=${signals.pStrong.toFixed(2)} (${where})`);
+      if (settling && !risky) {
+        reasons.push(`kept sonnet: P(opus)=${signals.pStrong.toFixed(2)}, ${settled}`);
+      } else {
+        tier = 'strong';
+        reasons.push(`upgrade: P(opus)=${signals.pStrong.toFixed(2)} (${where})`);
+      }
     }
   } else {
     const pStandard = 1 - signals.pStrong;
@@ -319,7 +328,9 @@ export function decideMain(signals: Signals, ctx: MainContext, config: GovernorC
     const money = switchEconomics('strong', 'standard', ctx, config);
     const pays = money.gain > money.cost;
     const sums = `switch ${usd(money.cost)} vs gain ${usd(money.gain)} over ${r.expectedTurns} turns`;
-    if (!risky && fits && pays && pStandard >= r.downgradeAt - down) {
+    if (!risky && fits && pays && pStandard >= r.downgradeAt - down && settling && ctx.pressure < 3) {
+      reasons.push(`kept opus: P(sonnet)=${pStandard.toFixed(2)}, ${settled}`);
+    } else if (!risky && fits && pays && pStandard >= r.downgradeAt - down) {
       tier = 'standard';
       reasons.push(`downgrade: P(sonnet)=${pStandard.toFixed(2)} (${where}; ${sums})`);
     } else if (!risky && fits && pays && ctx.pressure === 3 && pStandard >= 0.5) {

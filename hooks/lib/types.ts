@@ -68,6 +68,12 @@ export type GovernorConfig = {
     cheapSwitchTokens: number;
     /** Turns a downgrade is expected to last: its per-turn gain times this must beat the cache re-write it costs. */
     expectedTurns: number;
+    /**
+     * Turns after a model switch before the next one (warm cache): another switch would rewrite the
+     * cache again and drop the reasoning of the turns between (Opus 5.5 and Sonnet 5.5 cannot read
+     * each other's thinking). A clear upgrade, a risky task or a critical budget still switch.
+     */
+    settleTurns: number;
     /** Never move to the standard tier when the context is larger than this. */
     standardMaxContextTokens: number;
     /** Idle minutes after which the prompt cache is assumed cold. */
@@ -173,6 +179,11 @@ export type GovernorConfig = {
     maxTokens: number;
     /** A brief written by the original chat's model: `auto` only while its prompt cache is warm. */
     brief: 'auto' | 'always' | 'never';
+    /**
+     * How the brief is asked: `fork` a tool-less question over this chat's own context, served from its
+     * prompt cache and never added to the chat (`$.model.fork`); `turn` a visible turn of the chat.
+     */
+    briefVia: 'fork' | 'turn';
     briefWords: number;
     /** Ask Jev which older turns the capsule keeps; otherwise newest first. */
     useJev: boolean;
@@ -285,6 +296,14 @@ export type GovernorConfig = {
     /** A recall that takes longer is dropped and the prompt goes without it. */
     timeoutMs: number;
   };
+  /** Long tool descriptions nobody uses, moved behind ToolSearch (lib/tools.ts). */
+  tools: {
+    deferIdle: boolean;
+    deferAlso: string[];
+    keep: string[];
+    idleDays: number;
+    minChars: number;
+  };
   ui: {
     port: number;
     /** Language of the settings page (the page itself is translated in ui/src/i18n). */
@@ -387,6 +406,7 @@ export type LedgerKind =
   | 'chat'
   | 'window'
   | 'memory'
+  | 'tools'
   | 'error';
 
 /** One line of ledger/<YYYY-MM-DD>/<session>.jsonl. */
@@ -399,6 +419,8 @@ export type LedgerEntry = {
   scope?: 'main' | 'subagent';
   agentId?: string;
   project?: string;
+  /** `tools`: the tools this process put behind ToolSearch and their descriptions' characters. */
+  tools?: { deferred: string[]; chars: number };
   /** First characters of the prompt or task. */
   text?: string;
   model?: string;
@@ -510,6 +532,8 @@ export type LedgerEntry = {
     path?: string;
     /** Made by `/jevg fresh`: the chat is cleared and the capsule attached to the next prompt. */
     fresh?: boolean;
+    /** How the brief was asked (`fork`: over the cached context, nothing added to the chat). */
+    briefVia?: 'fork' | 'turn';
   };
   /** `turn`: Jev's probability that the request starts a new task. */
   newTopic?: number;

@@ -42,6 +42,7 @@ import { displayModel } from './lib/providers.ts';
 import { redact } from './lib/redact.ts';
 import { extractPrompt, extractSystem, parseCandidates, realTurn, turnKey, type Candidate, type KnownFact } from './lib/autosave.ts';
 import { chunkQuestions, isClaudeSavedOutput, isLogCandidate, isRunnerCommand, LOG_KEY_LINES, logQuestion, persistedOutputPath, MIN_TRIM_GAIN, planTrim, renderTrim, trimKind, worthTrimming, type Chunk } from './lib/trim.ts';
+import { shouldDefer, type ToolUse } from './lib/tools.ts';
 import { commandDir, describePrompt, describeSystem, normalizeObserved, parseDescriptions } from './lib/commands.ts';
 import {
   agentQuestion,
@@ -580,6 +581,7 @@ async function decideMainTurn($: EngineInterface, text: string): Promise<MainOut
       pressure: budget.pressure,
       previous: S.route.previous,
       turnProfile: S.route.turnProfile,
+      turnsSinceSwitch: S.route.turnsOnModel,
     },
     cfg,
   );
@@ -690,7 +692,7 @@ async function refreshCwd($: EngineInterface): Promise<void> {
 
 async function planSpawn(
   $: EngineInterface,
-  e: { subagentType: string; description: string; prompt: string; parentModel: string; model?: string },
+  e: { subagentType: string; description: string; prompt: string; parentModel: string; model?: string; workflow?: unknown },
 ): Promise<SpawnPlan | undefined> {
   await loadConfig($, false);
   await refreshCwd($);
@@ -698,7 +700,9 @@ async function planSpawn(
   if (await loadRegistry($)) await registerAll($);
   const known = new Set(S.agents.keys());
   const ownName = e.subagentType.startsWith(`${PLUGIN}:`) ? e.subagentType.slice(PLUGIN.length + 1) : undefined;
-  const remap = cfg.agents.enabled && cfg.agents.remapFrom.includes(e.subagentType);
+  // A workflow's agent keeps its script's prompt (the engine ignores a rewrite): no role to give it,
+  // so no specialist is matched or drafted for it; its model and effort are still routed per step.
+  const remap = cfg.agents.enabled && !e.workflow && cfg.agents.remapFrom.includes(e.subagentType);
   const candidates = remap ? rankCandidates([...S.agents.values()], e.prompt, MAX_CANDIDATES, e.description) : [];
   const questions: JevQuestions = {
     ...(cfg.router.subagents ? subagentQuestions() : {}),
@@ -1465,6 +1469,22 @@ async function startHandoff($: EngineInterface, args: string, fresh = false): Pr
   }
   const pending: Handoff = { id, focus, fresh };
   S.handoff = pending;
+  if (h.briefVia === 'fork') {
+    // Not inside the command: the fork takes a minute and the command's answer should not wait on it.
+    $.clock.after(0, () => void forkBrief($, pending, h.briefWords));
+    return (
+      L(`Готовлю капсулу${focus ? ` (фокус: ${focus})` : ''}.`, `Preparing the capsule${focus ? ` (focus: ${focus})` : ''}.`) +
+      ' ' +
+      L(
+        'Модель этого чата пишет бриф по его же контексту из кэша, в чат он не добавляется (около минуты).',
+        "This chat's model is writing a brief over its own cached context; nothing is added to the chat (about a minute).",
+      ) +
+      ' ' +
+      (fresh
+        ? L('Потом чат очистится (/clear), и капсула подключится к вашему следующему сообщению.', 'Then the chat will be cleared (/clear), and the capsule will attach to your next message.')
+        : L('Потом здесь появится промпт для нового чата.', 'Then a prompt for the new chat will appear here.'))
+    );
+  }
   const giveUp = async (why: string): Promise<void> => {
     if (S.handoff !== pending) return;
     S.handoff = undefined;
@@ -1486,6 +1506,34 @@ async function startHandoff($: EngineInterface, args: string, fresh = false): Pr
       ? L('Потом чат очистится (/clear), и капсула подключится к вашему следующему сообщению.', 'Then the chat will be cleared (/clear), and the capsule will attach to your next message.')
       : L('Потом здесь появится промпт для нового чата.', 'Then a prompt for the new chat will appear here.'))
   );
+}
+
+/**
+ * The handoff brief as a fork: the chat's last request again (same model, system prompt, tools and
+ * messages, so its prompt cache serves it) with the brief's question after it, tools denied, and
+ * nothing written to the chat. No answer (nothing to fork, an API error) makes the capsule without a
+ * brief, or, for /jevg fresh, stops before the clear.
+ */
+async function forkBrief($: EngineInterface, pending: Handoff, words: number): Promise<void> {
+  let brief: string | undefined;
+  let why: string | undefined;
+  let usage: LedgerEntry['usage'];
+  try {
+    const reply = await $.model.fork({ prompt: briefPrompt(pending.focus, words) });
+    if ('usage' in reply && reply.usage) {
+      const u = reply.usage;
+      usage = { model: await $.session.model(), input: u.input_tokens, output: u.output_tokens, cacheRead: u.cache_read_input_tokens, cacheWrite: u.cache_creation_input_tokens };
+    }
+    if (reply.isAnswered && reply.text.trim()) brief = reply.text.trim();
+    else why = reply.isAnswered ? L('бриф пустой', 'the brief is empty') : `${L('бриф не получен', 'no brief received')}: ${reply.reason}`;
+  } catch (error) {
+    why = `${L('бриф не получен', 'no brief received')}: ${errorText(error)}`;
+  }
+  if (S.handoff !== pending) return;
+  S.handoff = undefined;
+  if (pending.fresh && !brief) return cancelFresh($, pending.id, why ?? '');
+  const text = await finishHandoff($, pending.id, pending.focus, brief, brief ? undefined : `brief failed: ${why}`, pending.fresh, { briefVia: 'fork', usage });
+  $.ui.log(brief ? text : L(`jev-governor: ${why}, капсула без брифа.\n\n${text}`, `jev-governor: ${why}, capsule without a brief.\n\n${text}`));
 }
 
 /**
@@ -1572,6 +1620,7 @@ async function finishHandoff(
   brief: string | undefined,
   note?: string,
   fresh = false,
+  asked?: { briefVia: 'fork' | 'turn'; usage?: LedgerEntry['usage'] },
 ): Promise<string> {
   const h = S.cfg.handoff;
   try {
@@ -1654,7 +1703,9 @@ async function finishHandoff(
         jev: record.jev,
         path,
         ...(fresh ? { fresh: true } : {}),
+        ...(asked ? { briefVia: asked.briefVia } : {}),
       },
+      ...(asked?.usage ? { usage: asked.usage } : {}),
     });
     if (fresh) {
       clearAndAttach($, id, record.tokens, prompt);
@@ -2535,6 +2586,51 @@ async function ensureInit($: EngineInterface): Promise<void> {
   await S.initializing;
 }
 
+/** The tool-use record, read once from the store (a new one starts counting now). */
+async function toolUse($: EngineInterface): Promise<ToolUse> {
+  if (S.toolUse) return S.toolUse;
+  let saved: ToolUse | undefined;
+  try {
+    const raw = (await $.store.get('tool-use')) as ToolUse | undefined;
+    if (raw && typeof raw.since === 'number' && raw.last && typeof raw.last === 'object') saved = raw;
+  } catch {
+    saved = undefined;
+  }
+  S.toolUse = saved ?? { since: Date.now(), last: {} };
+  if (!saved) await $.store.set('tool-use', S.toolUse).catch(() => undefined);
+  return S.toolUse;
+}
+
+/** Notes a call of `tool` (at most once an hour per tool), merged with what other chats saved. */
+async function noteToolUse($: EngineInterface, tool: string): Promise<void> {
+  const use = await toolUse($);
+  const now = Date.now();
+  if (now - (use.last[tool] ?? 0) < 3_600_000) return;
+  use.last[tool] = now;
+  try {
+    const raw = (await $.store.get('tool-use')) as ToolUse | undefined;
+    const merged: ToolUse = { since: Math.min(use.since, raw?.since ?? use.since), last: { ...(raw?.last ?? {}) } };
+    for (const [name, at] of Object.entries(use.last)) merged.last[name] = Math.max(at, merged.last[name] ?? 0);
+    S.toolUse = merged;
+    await $.store.set('tool-use', merged);
+  } catch {
+    // The next call tries again.
+  }
+}
+
+/** Once a turn has started, the placements answered so far go to the ledger (once per process). */
+async function logDeferredTools($: EngineInterface): Promise<void> {
+  if (S.toolDeferLogged || S.toolDefer.size === 0) return;
+  S.toolDeferLogged = true;
+  const deferred = [...S.toolDefer].filter(([, d]) => d.defer);
+  if (deferred.length === 0) return;
+  await ledger($, {
+    kind: 'tools',
+    text: `${deferred.length} tools behind ToolSearch`,
+    tools: { deferred: deferred.map(([name]) => name), chars: deferred.reduce((sum, [, d]) => sum + d.chars, 0) },
+  });
+}
+
 /** Whether a hook's call comes from a plugin's own `$` call (the engine itself raises the model's). */
 function ownCall(next: { origin?: { plugin?: string } }): boolean {
   const plugin = next.origin?.plugin;
@@ -2626,6 +2722,7 @@ export const register: Register = (on) => {
       return result;
     };
     if (e.agentId === undefined) S.lastMainStepAt = Date.now();
+    if (!S.toolDeferLogged) void logDeferredTools($);
     // The handoff brief: same model (its cache is what makes it cheap), no deep reasoning needed.
     if (e.agentId === undefined && S.handoff?.turnId === e.turnId) {
       S.route.lastRequestAt = Date.now();
@@ -2695,6 +2792,8 @@ export const register: Register = (on) => {
     if (!turn.logged) {
       turn.logged = true;
       const switched = prevModel !== undefined && tierOf(prevModel, S.cfg) !== tierOf(model, S.cfg);
+      if (switched) S.route.turnsOnModel = 0;
+      else if (S.route.turnsOnModel !== undefined) S.route.turnsOnModel++;
       // A /model switch rewrites the cache too, whoever made it.
       turn.rewroteCache = (switched && (applied || outcome.manual === true)) || wasFree || outcome.cacheCold === true;
       // What the mod's own switch cost: a warm cache rewritten on the other model (savings count it).
@@ -2737,9 +2836,25 @@ export const register: Register = (on) => {
     return yield* counted({ ...e, model, ...(effort ? { effort } : {}) });
   });
 
+  // Long, unused tools behind ToolSearch; decided once per tool for the life of this process.
+  on('tool.describe', async ($, e, next) => {
+    const result = await next(e);
+    await ensureInit($);
+    if (!S.cfg.enabled || !S.cfg.tools.deferIdle) return result;
+    if ((result.isDeferred ?? e.isDeferred) === true) return result;
+    let placed = S.toolDefer.get(e.tool);
+    if (!placed) {
+      const chars = result.description.length;
+      placed = { defer: shouldDefer(e.tool, chars, await toolUse($), S.cfg.tools, Date.now()), chars };
+      S.toolDefer.set(e.tool, placed);
+    }
+    return placed.defer ? { ...result, isDeferred: true } : result;
+  });
+
   on('tool.call', async ($, e, next) => {
     await ensureInit($);
     const tool: string = e.tool;
+    if (S.cfg.tools.deferIdle) void noteToolUse($, tool);
     if ((tool === 'Read' || tool === 'Grep' || tool === 'Bash') && S.data) {
       // Grep may be a Bash `grep`/`rg` in builds without a Grep tool.
       const input = e as unknown as { file_path?: unknown; path?: unknown; pattern?: unknown; command?: unknown };
@@ -2821,7 +2936,7 @@ export const register: Register = (on) => {
     await ensureInit($);
     // The memory's notes on the task, asked while the plan is made and appended to the prompt
     // (the task stays first: a spawn is matched to its subagent by the prompt's start).
-    const recalling = e.fork ? Promise.resolve(undefined) : subagentRecall($, e.prompt, e.description);
+    const recalling = e.fork || e.workflow ? Promise.resolve(undefined) : subagentRecall($, e.prompt, e.description);
     const withNotes = async (): Promise<{ notes: string; memory?: NonNullable<LedgerEntry['memory']> }> => {
       const recalled = await recalling;
       return { notes: recalled?.block && !shadow() ? `\n\n${recalled.block.text}` : '', memory: recalled ? memoryEntry(recalled, 'subagent') : undefined };

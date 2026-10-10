@@ -29,6 +29,7 @@ export const DEFAULT_CONFIG: GovernorConfig = {
     lightMaxSteps: 80,
     cheapSwitchTokens: 30_000,
     expectedTurns: 4,
+    settleTurns: 3,
     standardMaxContextTokens: 180_000,
     cacheTtlMinutes: 60,
     minEffort: 'medium',
@@ -80,6 +81,7 @@ export const DEFAULT_CONFIG: GovernorConfig = {
     enabled: true,
     maxTokens: 14_000,
     brief: 'auto',
+    briefVia: 'fork',
     briefWords: 350,
     useJev: true,
     suggestAtTokens: 150_000,
@@ -136,6 +138,27 @@ export const DEFAULT_CONFIG: GovernorConfig = {
     maxFacts: 12,
     timeoutMs: 2_500,
   },
+  tools: {
+    deferIdle: true,
+    // Measured over 97 chats (2026-10-01..10): each called at most a few times, each long.
+    deferAlso: [
+      'Artifact',
+      'Workflow',
+      'ReportFindings',
+      'ScheduleWakeup',
+      'SearchPlugins',
+      'SuggestPluginInstall',
+      'SuggestSkills',
+      'mcp__Claude_Code_iOS_Simulator__*',
+      'mcp__visualize__*',
+      'mcp__ccd_session__spawn_task',
+      'mcp__ccd_session__dismiss_task',
+      'mcp__ccd_session__read_widget_context',
+    ],
+    keep: [],
+    idleDays: 14,
+    minChars: 800,
+  },
   ui: { port: 4777, language: 'auto', showStatus: true, nodePath: 'node', terminal: 'Terminal' },
   savings: { effortFactor: 0.3, defaultBaseModel: 'claude-opus-5-5', defaultBaseEffort: 'xhigh' },
   codex: { enabled: false },
@@ -191,6 +214,7 @@ export function resolveConfig(raw: unknown): GovernorConfig {
   const pr = isObject(c.projects) ? c.projects : {};
   const me = isObject(c.memory) ? c.memory : {};
   const sv = isObject(c.savings) ? c.savings : {};
+  const tl = isObject(c.tools) ? c.tools : {};
   const codex = isObject(c.codex) ? c.codex : {};
   const minEffort = effort(r.minEffort, d.router.minEffort);
   let maxEffort = effort(r.maxEffort, d.router.maxEffort);
@@ -228,6 +252,7 @@ export function resolveConfig(raw: unknown): GovernorConfig {
       lightMaxSteps: num(r.lightMaxSteps, d.router.lightMaxSteps, 1, 500),
       cheapSwitchTokens: num(r.cheapSwitchTokens, d.router.cheapSwitchTokens, 0, 2_000_000),
       expectedTurns: num(r.expectedTurns, d.router.expectedTurns, 1, 100),
+      settleTurns: num(r.settleTurns, d.router.settleTurns, 0, 50),
       standardMaxContextTokens: num(
         r.standardMaxContextTokens,
         d.router.standardMaxContextTokens,
@@ -291,6 +316,7 @@ export function resolveConfig(raw: unknown): GovernorConfig {
       enabled: bool(h.enabled, d.handoff.enabled),
       maxTokens: num(h.maxTokens, d.handoff.maxTokens, 2_000, 60_000),
       brief: h.brief === 'always' || h.brief === 'never' ? h.brief : 'auto',
+      briefVia: h.briefVia === 'turn' ? 'turn' : 'fork',
       briefWords: num(h.briefWords, d.handoff.briefWords, 100, 1_500),
       useJev: bool(h.useJev, d.handoff.useJev),
       suggestAtTokens: num(h.suggestAtTokens, d.handoff.suggestAtTokens, 0, 2_000_000),
@@ -344,6 +370,13 @@ export function resolveConfig(raw: unknown): GovernorConfig {
       maxChars: num(me.maxChars, d.memory.maxChars, 200, 20_000),
       maxFacts: num(me.maxFacts, d.memory.maxFacts, 1, 50),
       timeoutMs: num(me.timeoutMs, d.memory.timeoutMs, 200, 30_000),
+    },
+    tools: {
+      deferIdle: bool(tl.deferIdle, d.tools.deferIdle),
+      deferAlso: strings(tl.deferAlso, d.tools.deferAlso),
+      keep: strings(tl.keep, d.tools.keep),
+      idleDays: num(tl.idleDays, d.tools.idleDays, 1, 365),
+      minChars: num(tl.minChars, d.tools.minChars, 0, 100_000),
     },
     ui: {
       terminal: 'Terminal',
