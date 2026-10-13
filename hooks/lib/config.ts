@@ -1,4 +1,4 @@
-import { EFFORTS, type Effort, type GovernorConfig } from './types.ts';
+import { EFFORTS, type Effort, type GovernorConfig, type PathOverride } from './types.ts';
 
 export const DEFAULT_CONFIG: GovernorConfig = {
   version: 1,
@@ -7,6 +7,7 @@ export const DEFAULT_CONFIG: GovernorConfig = {
   shadowPaths: [],
   activePaths: [],
   excludeProjects: [],
+  pathOverrides: [],
   jev: {
     model: 'jev-latest',
     endpoint: 'https://openrouter.ai/api/v1/systemone',
@@ -210,6 +211,32 @@ function strings(value: unknown, fallback: string[]): string[] {
  * Merges a stored (possibly partial or hand-edited) config over the defaults,
  * clamping every number to a sane range; unknown keys are dropped.
  */
+function overrides(value: unknown): PathOverride[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!isObject(item) || typeof item.path !== 'string' || !item.path.trim() || !isObject(item.set)) return [];
+    return [{ path: item.path.trim(), set: item.set }];
+  });
+}
+
+function merge(base: Record<string, unknown>, over: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...base };
+  for (const [key, value] of Object.entries(over)) {
+    if (key === 'pathOverrides') continue;
+    const had = out[key];
+    out[key] = isObject(value) && isObject(had) ? merge(had, value) : value;
+  }
+  return out;
+}
+
+/** The file's settings with the `pathOverrides` that apply to a session in `cwd` merged over them, in file order. */
+export function withPathOverrides(raw: unknown, cwd: string, home: string): unknown {
+  if (!isObject(raw) || cwd === '') return raw;
+  return overrides(raw.pathOverrides)
+    .filter((o) => under(o.path, cwd, home))
+    .reduce<Record<string, unknown>>((acc, o) => merge(acc, o.set), raw);
+}
+
 export function resolveConfig(raw: unknown): GovernorConfig {
   const d = DEFAULT_CONFIG;
   const c = isObject(raw) ? raw : {};
@@ -235,6 +262,7 @@ export function resolveConfig(raw: unknown): GovernorConfig {
     shadowPaths: strings(c.shadowPaths, d.shadowPaths).map((p) => p.trim()).filter(Boolean),
     activePaths: strings(c.activePaths, d.activePaths).map((p) => p.trim()).filter(Boolean),
     excludeProjects: strings(c.excludeProjects, d.excludeProjects).map((p) => p.trim()).filter(Boolean),
+    pathOverrides: overrides(c.pathOverrides),
     jev: {
       model: str(jev.model, d.jev.model),
       endpoint: str(jev.endpoint, d.jev.endpoint),

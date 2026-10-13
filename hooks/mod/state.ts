@@ -117,6 +117,8 @@ export const S = {
   toolDeferLogged: false,
   cfg: DEFAULT_CONFIG as GovernorConfig,
   cfgMtime: -1,
+  /** The config file as read, before `pathOverrides` for this session's folder were merged in. */
+  cfgRaw: undefined as unknown,
   /** Language of the mod's messages (`ui.language`, 'auto' resolved). */
   lang: 'en' as Lang,
   data: '',

@@ -34,7 +34,7 @@ import { planFolds, runCompaction, summarizeCompaction } from './lib/compaction/
 import { messageChars } from './lib/compaction/compact.ts';
 import { applyFolds, DEFAULT_FOLD_OPTIONS, foldArchiveText, foldFileName, foldKeeps, foldStats, type FoldOptions } from './lib/compaction/fold.ts';
 import { resolveLang, systemLocales } from './lib/lang.ts';
-import { expandHome, isExcluded, resolveConfig } from './lib/config.ts';
+import { expandHome, isExcluded, resolveConfig, withPathOverrides } from './lib/config.ts';
 import { clip, estimateContextTokens, recentHistory, type HistoryMessage } from './lib/history.ts';
 import { applyRole, briefQuestions, briefVerdict, DELEGATION_GUIDE, denyText, readBrief, withScopeNote, type BriefSignals, type BriefVerdict } from './lib/brief.ts';
 import { choice, jevAsker, noul, withTimeout, type JevAsker, type JevQuestions, type JevResponse } from './lib/jev.ts';
@@ -165,7 +165,8 @@ async function loadConfig($: EngineInterface, force: boolean): Promise<void> {
   try {
     const stat = await $.fs.stat(path);
     if (!force && stat.mtimeMs === S.cfgMtime) return;
-    S.cfg = resolveConfig(await readJson($, path));
+    S.cfgRaw = await readJson($, path);
+    S.cfg = resolveConfig(withPathOverrides(S.cfgRaw, S.cwd, S.home));
     S.cfgMtime = stat.mtimeMs;
     await setLang($);
     // A window changed in the settings takes effect at once (bindSession logs it at start).
@@ -715,6 +716,7 @@ async function refreshCwd($: EngineInterface): Promise<void> {
   try {
     S.cwd = await projectRoot($);
     S.project = basename(S.cwd);
+    if (S.cfgRaw !== undefined) S.cfg = resolveConfig(withPathOverrides(S.cfgRaw, S.cwd, S.home));
   } catch {
     // keep the last known folder
   }

@@ -237,6 +237,9 @@ splits the managed turns' cost into input, output, cache reads and cache writes.
 - `handoff.suggestColdAtTokens` (300k) — suggest `/jevg fresh` when the cache
   of a context this large went cold.
 - `projects.enabled` — the whole project panel.
+- `pathOverrides` (0.3.14) — `[{"path": "~/ab/fastdev-B", "set": {"agents": {"brief": "on"}}}]`: settings merged
+  over the file for sessions whose project root is `path` or inside it (key by key, in file order; for A/B
+  runs where two folders need different settings while the mod stays active in both).
 - Short-lived workers (0.3.13) — a subagent's cost is its context carried over its steps (84 writing
   subagents: 479 steps at ~217k on average; 29% of agents ran over 150 steps and made 84% of subagent
   cost), so the mod pushes work toward several narrow workers on complete briefs:

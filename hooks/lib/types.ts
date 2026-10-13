@@ -8,6 +8,8 @@ export type Effort = (typeof EFFORTS)[number];
 /** The two model tiers the router chooses between. */
 export type Tier = 'standard' | 'strong';
 
+export type PathOverride = { path: string; set: Record<string, unknown> };
+
 export type GovernorConfig = {
   version: 1;
   /** Master switch: off, the mod changes nothing. */
@@ -18,6 +20,11 @@ export type GovernorConfig = {
   shadowPaths: string[];
   /** Sessions under these paths are active even in shadow mode (and win over shadowPaths). */
   activePaths: string[];
+  /**
+   * Settings that differ under a path (for A/B runs): `set` is merged over the file's own settings for
+   * sessions whose project root is `path` or inside it, e.g. `{"path":"~/ab/fastdev-A","set":{"agents":{"brief":"off"}}}`.
+   */
+  pathOverrides: PathOverride[];
   /** Projects whose work never goes to Jev (someone else's or work code): no routing, compaction or trimming by Jev there. */
   excludeProjects: string[];
   jev: {
