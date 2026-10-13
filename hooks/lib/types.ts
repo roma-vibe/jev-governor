@@ -64,6 +64,17 @@ export type GovernorConfig = {
     lightBelow: number;
     /** A light subagent moves to the standard tier after this many steps (a task that grew past searching) or after failed tool calls. */
     lightMaxSteps: number;
+    /**
+     * Model by the kind of work, with a complete brief: planning/review/security on the strong tier,
+     * implementing on the standard tier, docs and simple tests on the light model. `shadow` only records.
+     */
+    roles: 'off' | 'shadow' | 'on';
+    /** The role is used only when its probability reaches this. */
+    roleAt: number;
+    /** A role lowers the tier only when P(brief complete) reaches this. */
+    roleBriefOk: number;
+    /** A role does not lower the tier when Jev's P(opus) is at or above this. */
+    rolePStrongMax: number;
     /** Context below this many tokens makes a model switch cheap (for upgrades; downgrades weigh dollars). */
     cheapSwitchTokens: number;
     /** Turns a downgrade is expected to last: its per-turn gain times this must beat the cache re-write it costs. */
@@ -125,6 +136,24 @@ export type GovernorConfig = {
     autoMergeHours: number;
     /** Ask every subagent to keep each wait under 4 minutes: its prompt cache lives 5 (WAIT_NOTE). */
     waitHint: boolean;
+    /** Tell every writing subagent to stay narrow, keep files small and read ranges (SCOPE_NOTE). */
+    scopeNote: boolean;
+    /** The file size (lines) the scope note asks for. */
+    fileLines: number;
+    /** Add the brief template to the Agent tool's description, so the parent writes complete briefs. */
+    delegationGuide: boolean;
+    /**
+     * Judge every subagent brief (complete? too big for one worker?). `shadow` only records;
+     * `on` refuses a too-big task, or a thin brief headed for a lighter model, once, with the
+     * template and what to change (the same task spawned again goes through).
+     */
+    brief: 'off' | 'shadow' | 'on';
+    /** A brief below this P(complete) is thin for a lighter model. */
+    briefWeakAt: number;
+    /** A task at or above this P(too big) and `bigSteps` expected steps is too big for one worker. */
+    tooBigAt: number;
+    /** Expected tool calls at which a too-big task is refused. */
+    bigSteps: number;
   };
   compaction: {
     /** Replace the compaction summary with Jev pruning of stale tool calls. */
@@ -399,6 +428,7 @@ export type LedgerKind =
   | 'window'
   | 'memory'
   | 'tools'
+  | 'brief'
   | 'mod-call'
   | 'error';
 
@@ -433,6 +463,24 @@ export type LedgerEntry = {
   /** `subagent`: the task qualified for the light model; `lightApplied` says whether it ran there. */
   light?: boolean;
   lightApplied?: boolean;
+  /**
+   * `subagent` / `brief`: how the task's brief was judged (Jev's P(complete) and P(too big), expected
+   * tool calls, the likely role) and what the role would choose or chose; `denied` on a `brief` entry
+   * the parent was refused (once per task); `scopeNote` says the worker got the scope note.
+   */
+  brief?: {
+    mode: 'shadow' | 'on';
+    complete?: number;
+    tooBig?: number;
+    steps?: number;
+    role?: string;
+    roleP?: number;
+    roleMode?: 'shadow' | 'on';
+    roleWould?: 'none' | 'strong' | 'standard' | 'light';
+    verdict?: 'ok' | 'weak' | 'big';
+    denied?: boolean;
+    scopeNote?: boolean;
+  };
   agent?: string;
   subagentType?: string;
   created?: boolean;

@@ -551,6 +551,31 @@ async function main() {
     ]),
   );
 
+  // 4b. Short-lived workers: how the briefs were judged, and what a worker costs in steps and context.
+  {
+    const judged = [...subagents, ...by('brief')].filter((e) => e.brief);
+    const denied = by('brief').filter((e) => e.brief?.denied);
+    const verdicts = group(judged.filter((e) => e.brief.verdict), (e) => e.brief.verdict);
+    const roles = group(judged.filter((e) => e.brief.role), (e) => `${e.brief.role}${e.brief.roleWould && e.brief.roleWould !== 'none' ? `→${e.brief.roleWould}` : ''}`);
+    const completes = judged.map((e) => e.brief.complete).filter((n) => typeof n === 'number');
+    const runCost = (r) => r.steps.reduce((a, st) => a + stepCost(st, true), 0);
+    const runs = subRuns.filter((r) => r.steps.length > 0);
+    const costs = runs.map(runCost);
+    const long = runs.filter((r) => r.steps.length > 150);
+    const lines = [
+      judged.length
+        ? `Бриф оценён у ${judged.length} запусков (с заметкой о размере: ${count(judged, (e) => e.brief.scopeNote)}); P(полный) медиана ${completes.length ? median(completes).toFixed(2) : '—'}; вердикты: ${[...verdicts].map(([v, xs]) => `${v} ${xs.length}`).join(', ') || '—'}; отказов родителю: ${denied.length}.`
+        : 'Бриф ещё ни разу не оценивался (нужна сессия на версии мода с agents.brief / router.roles).',
+      judged.length ? `Роли: ${[...roles].sort((a, b) => b[1].length - a[1].length).map(([r, xs]) => `${r} ${xs.length}`).join(', ') || '—'} (стрелка — куда роль перевела бы или перевела модель).` : undefined,
+      runs.length
+        ? `Исполнители по транскриптам: ${runs.length}; шагов на агента медиана ${Math.round(median(runs.map((r) => r.steps.length)))} (p90 ${Math.round(quantile(runs.map((r) => r.steps.length), 0.9))}), контекст медиана ${k(median(runs.flatMap((r) => r.steps.map((st) => st.context))))}; стоимость на агента медиана ${usd(median(costs))}, среднее ${usd(costs.reduce((a, c) => a + c, 0) / runs.length)}.`
+        : undefined,
+      long.length ? `Длинных (больше 150 шагов): ${long.length} из ${runs.length}, ${pct(long.reduce((a, r) => a + runCost(r), 0), costs.reduce((a, c) => a + c, 0))} стоимости субагентов — это те, что стоило бы резать на узкие.` : undefined,
+    ];
+    out.push(section('4b. Короткоживущие исполнители', lines));
+    if (denied.length > 0) advice.push(`Родителю отказано ${denied.length} раз (бриф слишком большой или тонкий для лёгкой модели): сверьте, что после отказа задачи реально разбиты на узкие.`);
+  }
+
   // 5. Router errors: what a correction followed.
   const bySession = group(turns, (e) => e.session);
   const after = { sonnet: [0, 0], opus: [0, 0], low: [0, 0], high: [0, 0] };

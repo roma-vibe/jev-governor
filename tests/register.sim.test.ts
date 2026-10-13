@@ -77,6 +77,8 @@ let contextTokens = 412_000;
 let jevTier: 'strong' | 'standard' = 'strong';
 /** Routing: the effort score Jev gives. */
 let jevEffortScore = 2;
+/** Briefs: how Jev reads the task (complete? too big? expected steps level, the role it sees). */
+const jevBrief: { complete: number; tooBig: number; steps: number; role?: 'plan_review' | 'implement' | 'docs_tests'; roleP: number } = { complete: 0.1, tooBig: 0.1, steps: 2, roleP: 0.9 };
 /** Specialists: the one Jev picks when it is offered (else none). */
 let jevAgentPick: string | undefined;
 /** Specialists: drafts asked of the model, and the name each one gets. */
@@ -109,6 +111,11 @@ function jevReply(body: string): string {
         jevTier === 'strong'
           ? { choice: 'strong', confidence: 0.6, probabilities: { strong: 0.6, standard: 0.4 } }
           : { choice: 'standard', confidence: 0.95, probabilities: { strong: 0.05, standard: 0.95 } };
+    else if (name === 'brief_complete') answers[name] = { noul: jevBrief.complete };
+    else if (name === 'too_big') answers[name] = { noul: jevBrief.tooBig };
+    else if (name === 'steps') answers[name] = { score: jevBrief.steps, confidence: 0.9, probabilities: { [String(jevBrief.steps)]: 1 } };
+    else if (name.startsWith('role_') && jevBrief.role)
+      answers[name] = { choice: jevBrief.role, confidence: jevBrief.roleP, probabilities: { [jevBrief.role]: jevBrief.roleP } };
     else if (name === 'agent' && jevAgentPick && q.criteria?.[jevAgentPick])
       answers[name] = { choice: jevAgentPick, confidence: 0.9, probabilities: { [jevAgentPick]: 0.9 } };
     else if (q.type === 'choice') answers[name] = { choice: 'none', confidence: 0.9, probabilities: { none: 0.9 } };
@@ -1569,4 +1576,148 @@ describe('jev-governor hooks against a fake engine', () => {
       expect(JSON.parse(files.get(`${DATA}/config.json`)!).memory.enabled).toBe(false);
     });
   });
+
+  describe('short-lived workers (briefs, scope note, roles)', () => {
+    const setCfg = async (patch: { agents?: Record<string, unknown>; router?: Record<string, unknown> }): Promise<void> => {
+      const cfg = JSON.parse(files.get(`${DATA}/config.json`) ?? '{}');
+      files.set(`${DATA}/config.json`, JSON.stringify({ ...cfg, agents: { ...cfg.agents, ...patch.agents }, router: { ...cfg.router, ...patch.router } }));
+      await emit('command.run', { command: 'jevg', args: 'reload' }, async () => ({ text: '' }));
+    };
+    const ledgerOf = (id: string): Record<string, any>[] =>
+      [...files.entries()].filter(([p]) => p.endsWith(`${id}.jsonl`)).flatMap(([, t]) => t.split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+    const spawn = async (description: string, agentId: string, extra: Record<string, unknown> = {}): Promise<{ seen: any; result: any }> => {
+      let seen: any;
+      const result = await emit(
+        'agent.spawn',
+        { subagentType: 'general-purpose', description, prompt: `${description}: do the job in /work/app/src.`, parentModel: 'claude-opus-5-5', ...extra },
+        async (x: any) => {
+          seen = x;
+          return { agentId, model: x.model ?? x.parentModel };
+        },
+      );
+      return { seen, result };
+    };
+    const reset = (): void => {
+      Object.assign(jevBrief, { complete: 0.1, tooBig: 0.1, steps: 2, role: undefined, roleP: 0.9 });
+      jevTier = 'strong';
+    };
+
+    it('adds the brief template to the Agent tool description once, and leaves other tools alone', async () => {
+      await startSession('guide-session');
+      const describe = (tool: string, description: string) =>
+        emit('tool.describe', { tool, description, provider: { plugin: 'engine', tier: 'core' } }, async (x: { description: string }) => ({ description: x.description }));
+      const agent = await describe('Agent', 'Launch a new agent.');
+      expect(agent.description.startsWith('Launch a new agent.')).toBe(true);
+      expect(agent.description).toContain('Done when:');
+      expect(agent.description.match(/Writing the prompt \(jev-governor\)/g)).toHaveLength(1);
+      expect((await describe('Bash', 'Run a command.')).description).toBe('Run a command.');
+      await setCfg({ agents: { delegationGuide: false } });
+      await startSession('guide-session-2');
+      expect((await describe('Agent', 'Launch a new agent.')).description).toBe('Launch a new agent.');
+      await setCfg({ agents: { delegationGuide: true } });
+    });
+
+    it('a writing worker gets the scope note, a search agent does not; the ledger records the brief reading', async () => {
+      await startSession('scope-session');
+      jevTier = 'standard';
+      Object.assign(jevBrief, { complete: 0.8 });
+      try {
+        const writer = await spawn('Build the export module', 'scope-1');
+        expect(writer.seen.prompt).toContain('<scope-note>');
+        expect(writer.seen.prompt).toContain('under about 300 lines');
+        const search = await spawn('Find the config files', 'scope-2', { subagentType: 'Explore' });
+        expect(search.seen.prompt).not.toContain('<scope-note>');
+        const entries = ledgerOf('scope-session').filter((e) => e.kind === 'subagent');
+        expect(entries[0]).toMatchObject({ brief: { mode: 'shadow', scopeNote: true, complete: 0.8, tooBig: 0.1, steps: 90, verdict: 'ok' } });
+        expect(entries[0]!.reasons.join(' ')).toContain('scope note added');
+        await setCfg({ agents: { scopeNote: false } });
+        expect((await spawn('Build the import module', 'scope-3')).seen.prompt).not.toContain('<scope-note>');
+      } finally {
+        reset();
+        await setCfg({ agents: { scopeNote: true } });
+      }
+    });
+
+    it('with the brief check on, a too-big task and a thin brief for a lighter model are refused once with the template', async () => {
+      await startSession('deny-session');
+      await setCfg({ agents: { brief: 'on' } });
+      try {
+        jevTier = 'strong';
+        Object.assign(jevBrief, { complete: 0.9, tooBig: 0.9, steps: 4 });
+        const big = await spawn('Build the whole billing system', 'deny-1');
+        expect(big.seen).toBeUndefined();
+        expect(big.result.deny).toContain('too large for one subagent');
+        expect(big.result.deny).toContain('Done when:');
+        // The same task again goes through.
+        const again = await spawn('Build the whole billing system', 'deny-1');
+        expect(again.seen.prompt).toContain('<scope-note>');
+        // A thin brief that Jev would hand to Sonnet is refused once as well.
+        jevTier = 'standard';
+        Object.assign(jevBrief, { complete: 0.1, tooBig: 0.1, steps: 2 });
+        const thin = await spawn('Add the retry option', 'deny-2');
+        expect(thin.result.deny).toContain('too thin for a smaller model');
+        expect((await spawn('Add the retry option', 'deny-2')).seen.model).toBe('claude-sonnet-5-5');
+        // A complete brief for the same lighter model is not touched.
+        Object.assign(jevBrief, { complete: 0.9 });
+        expect((await spawn('Add the timeout option', 'deny-3')).result.deny).toBeUndefined();
+        const kinds = ledgerOf('deny-session').filter((e) => e.kind === 'brief');
+        expect(kinds).toHaveLength(2);
+        expect(kinds[0]).toMatchObject({ brief: { denied: true, verdict: 'big', mode: 'on' } });
+      } finally {
+        reset();
+        await setCfg({ agents: { brief: 'shadow' } });
+      }
+    });
+
+    it('records but does not refuse in shadow, and a search agent is never refused', async () => {
+      await startSession('shadow-brief-session');
+      try {
+        Object.assign(jevBrief, { complete: 0.9, tooBig: 0.9, steps: 4 });
+        const big = await spawn('Build the whole billing system', 'sb-1');
+        expect(big.result.deny).toBeUndefined();
+        expect(ledgerOf('shadow-brief-session').find((e) => e.kind === 'subagent')?.brief).toMatchObject({ verdict: 'big', mode: 'shadow' });
+        await setCfg({ agents: { brief: 'on' } });
+        expect((await spawn('Survey every module', 'sb-2', { subagentType: 'Explore' })).result.deny).toBeUndefined();
+      } finally {
+        reset();
+        await setCfg({ agents: { brief: 'shadow' } });
+      }
+    });
+
+    it('roles on: implementing a complete brief goes to Sonnet, review stays on Opus, docs go to the light model; shadow only records', async () => {
+      await startSession('roles-session');
+      await setCfg({ router: { roles: 'on', lightSubagents: 'on' } });
+      try {
+        jevTier = 'strong'; // Jev alone would send these to Opus (P(opus) 0.6).
+        Object.assign(jevBrief, { complete: 0.9, tooBig: 0.1, steps: 2, role: 'implement' });
+        const impl = await spawn('Implement the export module', 'role-1');
+        expect(impl.seen.model).toBe('claude-sonnet-5-5');
+        expect(impl.seen.prompt).toContain('<scope-note>');
+        Object.assign(jevBrief, { role: 'plan_review' });
+        jevTier = 'standard';
+        expect((await spawn('Review the auth design', 'role-2')).seen.model).toBe('claude-opus-5-5');
+        Object.assign(jevBrief, { role: 'docs_tests' });
+        expect((await spawn('Write the README for the export module', 'role-3')).seen.model).toBe('claude-haiku-5-5');
+        // A thin brief keeps the model Jev chose.
+        jevTier = 'strong';
+        Object.assign(jevBrief, { complete: 0.2, role: 'implement' });
+        expect((await spawn('Implement the import module', 'role-4')).seen.model).toBe('claude-opus-5-5');
+        const entries = ledgerOf('roles-session').filter((e) => e.kind === 'subagent');
+        expect(entries[0]).toMatchObject({ brief: { role: 'implement', roleMode: 'on', roleWould: 'standard' } });
+        expect(entries[0]!.reasons.join(' ')).toContain('role implement');
+
+        await setCfg({ router: { roles: 'shadow' } });
+        Object.assign(jevBrief, { complete: 0.9, role: 'implement' });
+        const watched = await spawn('Implement the export module again', 'role-5');
+        expect(watched.seen.model).toBe('claude-opus-5-5');
+        const last = ledgerOf('roles-session').filter((e) => e.kind === 'subagent').at(-1)!;
+        expect(last.brief).toMatchObject({ roleMode: 'shadow', roleWould: 'standard' });
+        expect(last.reasons.join(' ')).toContain('(shadow) role implement');
+      } finally {
+        reset();
+        await setCfg({ router: { roles: 'shadow', lightSubagents: 'on' } });
+      }
+    });
+  });
+
 });

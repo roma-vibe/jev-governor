@@ -237,6 +237,23 @@ splits the managed turns' cost into input, output, cache reads and cache writes.
 - `handoff.suggestColdAtTokens` (300k) — suggest `/jevg fresh` when the cache
   of a context this large went cold.
 - `projects.enabled` — the whole project panel.
+- Short-lived workers (0.3.13) — a subagent's cost is its context carried over its steps (84 writing
+  subagents: 479 steps at ~217k on average; 29% of agents ran over 150 steps and made 84% of subagent
+  cost), so the mod pushes work toward several narrow workers on complete briefs:
+  - `agents.delegationGuide` (true) — a brief template (goal, files, what it cannot guess, done-when,
+    report; prefer several narrow subagents) appended to the Agent tool's description.
+  - `agents.scopeNote` (true), `agents.fileLines` (300) — a `<scope-note>` on every writing worker's
+    task: touch only what the task names, small files of one responsibility, read ranges not whole files.
+  - `agents.brief` (`shadow` | `on` | `off`, default `shadow`), `briefWeakAt` (0.35), `tooBigAt` (0.6),
+    `bigSteps` (150) — Jev judges each brief (complete? too big for one worker? expected tool calls). In
+    `shadow` it only records; in `on` the parent is refused once per task when it is too big, or too thin
+    for a lighter model (the retry of the same task goes through). Read-only agents are never refused.
+  - `router.roles` (`shadow` | `on` | `off`, default `shadow`), `roleAt` (0.5), `roleBriefOk` (0.5),
+    `rolePStrongMax` (0.9) — model by kind of work: planning/review/security stay strong, implementing a
+    complete brief goes to the standard tier, documentation and simple tests to the light model; never when
+    risky, with a thin brief, or when Jev is sure Opus is needed. Ledger `brief` carries `roleWould`.
+  - `node scripts/monitor.mjs` §4b prints verdicts, roles, steps/context/cost per worker and the share of
+    cost in workers over 150 steps.
 - `router.lightSubagents` (`shadow` | `on` | `off`, default `on` since 0.3.5), `router.lightBelow` (0.25),
   `router.lightMaxSteps` (80), `models.light` (`claude-haiku-5-5`; a config naming Haiku 4.5 is moved to it) —
   read-only subagents with an easy task on the light model: Haiku 5.5 costs $0.10/$0.50 per MTok with cache

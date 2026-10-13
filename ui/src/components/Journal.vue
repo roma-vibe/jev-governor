@@ -244,6 +244,8 @@ function details(e: LedgerEntry): string {
         : '';
     case 'hint':
       return [e.newTopic !== undefined ? t('P(new task) {value}', { value: fmtP(e.newTopic) }) : '', reasons(e)].filter(Boolean).join(' · ');
+    case 'brief':
+      return [e.brief?.verdict, e.brief?.complete !== undefined ? `P(complete) ${fmtP(e.brief.complete)}` : '', e.brief?.tooBig !== undefined ? `P(too big) ${fmtP(e.brief.tooBig)}` : '', reasons(e)].filter(Boolean).join(' · ');
     case 'light-up':
       return reasons(e);
     case 'memory':

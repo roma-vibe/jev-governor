@@ -239,7 +239,7 @@ Rules:
 - The agent must be reusable for the whole CLASS of similar tasks, never tied to the specific task given.
 - name: kebab-case, 2-4 words, max 40 chars, e.g. "rust-test-fixer".
 - description: one line, max 160 chars, says WHEN to use the agent.
-- prompt: English, max 600 chars, second person, imperative. Cover role, approach and what to report back. No filler, no restating generic coding advice.
+- prompt: English, max 600 chars, second person, imperative. Cover role, approach and what to report back. No filler, no restating generic coding advice. A role that writes code also says: one responsibility per file, files under about 300 lines, read only the needed line range of a long file.
 - tools: subset of [Read, Grep, Glob, Bash, Edit, Write, WebFetch, WebSearch]; use null for all tools. Read-only roles must not get Edit or Write.
 - reuse_skills: names from existing_skills that clearly apply. Never write a new skill that repeats an existing one: reuse it.
 - new_skills: at most 2, only for concrete reusable know-how (exact commands, project conventions, pitfalls) visible in the task or project; body max 600 chars. Prefer reuse over new.`;

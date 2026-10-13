@@ -5,6 +5,7 @@
 // through `$` stays in register.ts (see docs/ARCHITECTURE.md).
 
 import { callLabel, prunedCalls, rerunKey, type PrunedCall } from '../lib/archive.ts';
+import type { BriefSignals, BriefVerdict, RoleChange } from '../lib/brief.ts';
 import type { Pressure } from '../lib/budget.ts';
 import type { CapsuleMeta } from '../lib/capsule.ts';
 import { collectToolCalls } from '../lib/compaction/state.ts';
@@ -143,6 +144,8 @@ export const S = {
   describeBusy: false,
   /** Drafting a specialist, one at a time: parallel spawns wait and may reuse what was just drafted. */
   draftLock: Promise.resolve() as Promise<void>,
+  /** Tasks whose brief was refused once (`agents.brief` on): the same task again goes through. */
+  briefAsked: new Set<string>(),
   mergeBusy: false,
   /** When this session last looked whether a background merge is due (`agents.autoMergeHours`). */
   autoMergeCheckedAt: 0,
@@ -428,6 +431,14 @@ export type SpawnPlan = {
   pressure: Pressure;
   jevMs?: number;
   jevCost?: number;
+  /** How Jev judged the task's brief, and the role it read (agents.brief, router.roles). */
+  brief?: BriefSignals;
+  verdict?: BriefVerdict;
+  role?: RoleChange;
+  /** The worker got the scope note. */
+  scoped?: boolean;
+  /** The refusal text when the brief is refused (once per task). */
+  deny?: string;
 };
 
 /** What identifies a spawn's task in its subagent's first message. */

@@ -36,6 +36,7 @@ import { applyFolds, DEFAULT_FOLD_OPTIONS, foldArchiveText, foldFileName, foldKe
 import { resolveLang, systemLocales } from './lib/lang.ts';
 import { expandHome, isExcluded, resolveConfig } from './lib/config.ts';
 import { clip, estimateContextTokens, recentHistory, type HistoryMessage } from './lib/history.ts';
+import { applyRole, briefQuestions, briefVerdict, DELEGATION_GUIDE, denyText, readBrief, withScopeNote, type BriefSignals, type BriefVerdict } from './lib/brief.ts';
 import { choice, jevAsker, noul, withTimeout, type JevAsker, type JevQuestions, type JevResponse } from './lib/jev.ts';
 import { isMemoryTool, looksDown, memoryBlock, parseRecall, recallTask, resultText as memoryText, sessionSummary, stillConnecting, type RecallResult } from './lib/memory.ts';
 import { displayModel } from './lib/providers.ts';
@@ -733,9 +734,12 @@ async function planSpawn(
   // so no specialist is matched or drafted for it; its model and effort are still routed per step.
   const remap = cfg.agents.enabled && !e.workflow && cfg.agents.remapFrom.includes(e.subagentType);
   const candidates = remap ? rankCandidates([...S.agents.values()], e.prompt, MAX_CANDIDATES, e.description) : [];
+  // A workflow's agent keeps its script's prompt, so its brief is nobody's to improve.
+  const judgeBrief = !e.workflow && (cfg.agents.brief !== 'off' || cfg.router.roles !== 'off');
   const questions: JevQuestions = {
     ...(cfg.router.subagents ? subagentQuestions() : {}),
     ...(candidates.length > 0 ? { agent: agentQuestion(candidates) } : {}),
+    ...(judgeBrief ? briefQuestions() : {}),
   };
   const budget = await pressureNow($);
   const asked =
@@ -771,6 +775,9 @@ async function planSpawn(
   const signals = asked ? readSignals(asked.response.answers) : undefined;
   const pinnedTier = agent && agent.tier !== 'auto' ? agent.tier : undefined;
   const pinnedEffort = agent && agent.effort !== 'auto' ? agent.effort : undefined;
+  const readOnly =
+    e.subagentType === 'Explore' ||
+    (agent?.tools !== undefined && !agent.tools.some((t) => ['Edit', 'Write', 'NotebookEdit'].includes(t)));
   let decision: Decision | undefined;
   // The fallback leaves the model alone unless the agent pins it (an Explore agent keeps its own).
   let keepModel = false;
@@ -787,9 +794,7 @@ async function planSpawn(
       {
         pressure: budget.pressure,
         subagentType: agent ? agentType(agent.name) : e.subagentType,
-        readOnly:
-          e.subagentType === 'Explore' ||
-          (agent?.tools !== undefined && !agent.tools.some((t) => ['Edit', 'Write', 'NotebookEdit'].includes(t))),
+        readOnly,
         pinnedTier,
         pinnedEffort,
       },
@@ -799,12 +804,42 @@ async function planSpawn(
     decision = { tier: pinnedTier, effort: pinnedEffort ?? cfg.router.defaultEffort, switched: false, reasons: ['pinned by agent'] };
   }
 
+  // The brief and the role: judged for every spawn when asked; the role changes the decision only
+  // with router.roles on, the refusal only with agents.brief on (and never in shadow mode).
+  let brief: BriefSignals | undefined;
+  let verdict: BriefVerdict | undefined;
+  let role: ReturnType<typeof applyRole> | undefined;
+  let deny: string | undefined;
+  if (asked && judgeBrief) brief = readBrief(asked.response.answers);
+  if (brief && decision) {
+    role = applyRole(decision, brief, { pinnedTier: pinnedTier !== undefined, pStrong: signals?.pStrong ?? 1, risky: signals?.risky ?? 0 }, cfg);
+    if (cfg.router.roles === 'on' && !shadow() && role.would !== 'none') decision = { ...role.decision, reasons: [...role.decision.reasons, ...role.reasons] };
+    if (cfg.agents.brief !== 'off' && !readOnly) {
+      const parentTier = tierOf(e.model ?? e.parentModel, cfg);
+      const lower = decision.light === true || (decision.tier === 'standard' && parentTier !== 'standard');
+      verdict = briefVerdict(brief, cfg, lower);
+      const asKey = `${S.project}|${e.description.trim().toLowerCase()}`;
+      if (verdict !== 'ok' && cfg.agents.brief === 'on' && !shadow() && !S.briefAsked.has(asKey)) {
+        S.briefAsked.add(asKey);
+        if (S.briefAsked.size > 500) S.briefAsked.delete(S.briefAsked.values().next().value as string);
+        deny = denyText(verdict, brief);
+      }
+    }
+  }
+
   let prompt = e.prompt;
   if (agent && !ownName) prompt = withRolePreamble(agent, S.skills, e.prompt);
   if (cfg.agents.waitHint) prompt = withWaitNote(prompt);
+  const scoped = cfg.agents.scopeNote && !readOnly && !e.workflow;
+  if (scoped) prompt = withScopeNote(prompt, cfg.agents.fileLines);
   return {
     rate: budget.rate,
     prompt,
+    ...(brief ? { brief } : {}),
+    ...(verdict ? { verdict } : {}),
+    ...(role ? { role } : {}),
+    ...(scoped ? { scoped } : {}),
+    ...(deny ? { deny } : {}),
     model: decision && !keepModel ? (decision.light && cfg.router.lightSubagents === 'on' ? cfg.models.light : cfg.models[decision.tier]) : undefined,
     decision,
     agent,
@@ -814,6 +849,35 @@ async function planSpawn(
     jevMs: asked?.ms,
     jevCost: asked?.response.usage?.cost,
   };
+}
+
+/** The brief part of a spawn's ledger entry: Jev's reading of the task, the role, the refusal, the scope note. */
+function briefLog(plan: SpawnPlan, denied = false): LedgerEntry['brief'] | undefined {
+  const b = plan.brief;
+  if (!b && !plan.scoped) return undefined;
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  return {
+    mode: S.cfg.agents.brief === 'on' && !shadow() ? 'on' : 'shadow',
+    ...(b
+      ? {
+          complete: r2(b.complete),
+          tooBig: r2(b.tooBig),
+          ...(b.steps !== undefined ? { steps: b.steps } : {}),
+          role: b.role,
+          roleP: r2(b.roleP),
+          roleMode: S.cfg.router.roles === 'on' && !shadow() ? ('on' as const) : ('shadow' as const),
+          ...(plan.role ? { roleWould: plan.role.would } : {}),
+        }
+      : {}),
+    ...(plan.verdict ? { verdict: plan.verdict } : {}),
+    ...(denied ? { denied: true } : {}),
+    ...(plan.scoped ? { scopeNote: true } : {}),
+  };
+}
+
+/** The role's reasons when it only watched (shadow); with the role on they are already in the decision's. */
+function roleNotes(plan: SpawnPlan): string[] {
+  return plan.role && (S.cfg.router.roles !== 'on' || shadow()) ? plan.role.reasons.map((r) => `(shadow) ${r}`) : [];
 }
 
 /**
@@ -2868,8 +2932,13 @@ export const register: Register = (on) => {
 
   // Long, unused tools behind ToolSearch; decided once per tool for the life of this process.
   on('tool.describe', async ($, e, next) => {
-    const result = await next(e);
+    const first = await next(e);
     await ensureInit($);
+    // The brief template goes into the Agent tool's description: the parent reads it before every spawn.
+    const result =
+      e.tool === 'Agent' && active() && !shadow() && S.cfg.agents.delegationGuide && !first.description.includes('jev-governor')
+        ? { ...first, description: `${first.description}${DELEGATION_GUIDE}` }
+        : first;
     if (!S.cfg.enabled || !S.cfg.tools.deferIdle) return result;
     if ((result.isDeferred ?? e.isDeferred) === true) return result;
     let placed = S.toolDefer.get(e.tool);
@@ -2986,6 +3055,21 @@ export const register: Register = (on) => {
       await ledger($, { kind: 'error', error: `spawn plan: ${errorText(error)}` });
     }
     if (!plan) return plain();
+    if (plan.deny && !shadow()) {
+      await ledger($, {
+        kind: 'brief',
+        scope: 'subagent',
+        subagentType: e.subagentType,
+        text: clip(e.description, 160),
+        brief: briefLog(plan, true),
+        reasons: [`denied: ${plan.deny.slice(0, 160)}`],
+        jevMs: plan.jevMs,
+        jevCost: plan.jevCost,
+        applied: true,
+        rate: plan.rate,
+      });
+      return { deny: plan.deny };
+    }
     const { notes, memory } = await withNotes();
     if (shadow()) {
       const result = await next(e);
@@ -3002,7 +3086,8 @@ export const register: Register = (on) => {
         effortScore: plan.signals?.effortExpected,
         risky: plan.signals?.risky,
         pressure: plan.pressure,
-        reasons: [...(plan.decision?.reasons ?? []), `ran as ${result.model ?? e.parentModel}`],
+        reasons: [...(plan.decision?.reasons ?? []), ...roleNotes(plan), `ran as ${result.model ?? e.parentModel}`],
+        ...(briefLog(plan) ? { brief: briefLog(plan) } : {}),
         ...(plan.decision?.light ? { light: true, lightApplied: false } : {}),
         ...(memory ? { memory } : {}),
         jevMs: plan.jevMs,
@@ -3054,8 +3139,11 @@ export const register: Register = (on) => {
         ...(plan.decision?.reasons ?? []),
         ...(plan.agent && plan.prompt.startsWith('<role>') && !e.prompt.startsWith('<role>') ? [`specialist ${plan.agent.name} (role prepended)`] : []),
         ...(plan.prompt.includes('<cache-note>') && !e.prompt.includes('<cache-note>') ? ['wait note added'] : []),
+        ...(plan.scoped ? ['scope note added'] : []),
+        ...roleNotes(plan),
         ...(result.deny ? [`denied: ${result.deny}`] : []),
       ],
+      ...(briefLog(plan) ? { brief: briefLog(plan) } : {}),
       jevMs: plan.jevMs,
       jevCost: plan.jevCost,
       ...(plan.decision?.light ? { light: true, lightApplied: sub?.light === true } : {}),
