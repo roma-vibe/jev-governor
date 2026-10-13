@@ -10,6 +10,6 @@
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["server.ts", "lib/**/*.ts", "../tests/projects.test.ts"],
+  "include": ["server.ts", "lib/**/*.ts", "../tests/projects.test.ts", "../tests/reset.test.ts"],
   "exclude": []
 }

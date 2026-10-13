@@ -16,6 +16,7 @@ import path from 'node:path';
 import { computeSavings, familyOf, PRICES, priceAt, usageCost } from '../hooks/lib/savings.ts';
 import { resolveConfig } from '../hooks/lib/config.ts';
 import { pricable } from '../ui/lib/pricable.ts';
+import { afterReset, readReset } from '../ui/lib/reset.ts';
 
 // ------------------------------------------------------------------- args --
 
@@ -610,10 +611,9 @@ async function main() {
   }
 
   // 7. Spend.
-  const report = computeSavings(entries.filter(pricable), {
-    effortFactor: config.savings.effortFactor,
-    defaultBase: { model: config.savings.defaultBaseModel, effort: config.savings.defaultBaseEffort },
-  });
+  // Savings start at the statistics reset (ledger/RESET); the other checks read the whole window.
+  const reset = await readReset(DATA);
+  const report = computeSavings(entries.filter((e) => pricable(e) && afterReset(e, reset)));
   const t = report.totals;
   const costSum = t.cost.input + t.cost.output + t.cost.cacheRead + t.cost.cacheWrite;
   const lastRate = [...entries].reverse().find((e) => e.rate && (e.rate.fiveHour !== undefined || e.rate.sevenDay !== undefined))?.rate;
@@ -636,8 +636,9 @@ async function main() {
       `Пересборок кэша субагентов после паузы больше 5 минут: ${rebuilds.length}${rebuilds.length ? `, ${k(rebuilds.reduce((a, r) => a + r.tokens, 0))} токенов, ≈ ${usd(rebuildCost)}` : ''}.`,
       `Журнал мода учёл ${pct(loggedMain, seenMain)} расхода основного диалога в своих сессиях (${usd(loggedMain)} из ${usd(seenMain)}); записей usage по шагам (0.3.4+): ${fromSteps} из ${usage.length}.`,
       `Ходы под управлением мода: ${usd(t.actual)} — чтение кэша ${pct(t.cost.cacheRead, costSum)}, запись ${pct(t.cost.cacheWrite, costSum)}, вывод ${pct(t.cost.output, costSum)}, вход ${pct(t.cost.input, costSum)}.`,
-      `Сэкономлено: точно ${usd(t.exact)}, по оценке ≈ ${usd(t.estimated)}; Jev ${usd(t.jev)}; чистая выгода ${usd(t.net)}${t.assumedTurns ? `; из неё от допущения «без мода ${report.events.find((e) => e.assumed)?.assumed}» ${usd(t.assumed)} (${t.assumedTurns} ходов)` : ''}.`,
+      `Сэкономлено (модель и effort — данность, считаются только сжатие, обрезка, инструменты за ToolSearch): точно ${usd(t.exact)}, по оценке ≈ ${usd(t.estimated)}; потратил мод ${usd(t.spent)} (Jev ${usd(t.jev)}, свои вызовы моделей ${usd(t.calls)}); чистая выгода ${usd(t.net)} — ${pct(t.net, t.withoutMod)} от ${usd(t.withoutMod)} «без мода».`,
       `По источникам: ${Object.entries(t.bySource).map(([s, v]) => `${s} ${usd(v)}`).join(', ')}.`,
+      `Модели (не в экономии): ${report.routing.main.map((r) => `${r.model}${r.effort ? `·${r.effort}` : ''} ${r.turns} ход. ${usd(r.cost)}`).join(', ') || '—'}${report.routing.subagent.length ? `; субагенты ${report.routing.subagent.map((r) => `${r.model}${r.effort ? `·${r.effort}` : ''} ${usd(r.cost)}`).join(', ')}` : ''}.`,
       lastRate ? `Лимиты на последнюю запись: 5h ${lastRate.fiveHour ?? '—'}%, 7d ${lastRate.sevenDay ?? '—'}%.` : undefined,
     ]),
   );
@@ -652,19 +653,7 @@ async function main() {
     advice.push(`Jev отказывал: ${retries.length} повторов, ${fallbacks.length} решений на запасном effort. Если это часто, поднять jev.timeoutMs или проверить OpenRouter.`);
   }
 
-  // 8. Baseline fields.
-  const turnUsage = [...turns, ...usage.filter((e) => e.scope !== 'subagent')];
-  const noBase = turnUsage.filter((e) => e.baseModel === undefined || e.baseEffort === undefined);
-  out.push(
-    section('8. База «без мода» в записях turn и usage', [
-      `Записей: ${turnUsage.length}; без baseModel или baseEffort: **${noBase.length}**${noBase.length ? ` (сессии: ${[...new Set(noBase.map((e) => e.session.slice(0, 8)))].join(', ')})` : ''}.`,
-    ]),
-  );
-  if (noBase.length > 0) {
-    advice.push(`${noBase.length} записей без базы «без мода»: экономия для них считается от допущения. Если среди них есть сессии на новом коде — смотреть usageBase и turn.step в hooks/register.ts.`);
-  }
-
-  // 9. Trim, secrets, agents, ledger, errors.
+  // 8. Trim, secrets, agents, ledger, errors.
   const trims = by('trim');
   const trimmed = trims.filter((e) => e.applied !== false && e.trim);
   const fromFile = trimmed.filter((e) => e.trim.persisted);
@@ -673,7 +662,7 @@ async function main() {
   const atCap = files.filter((f) => f.lines >= LEDGER_MAX_LINES);
   const errors = group(by('error'), (e) => String(e.error ?? '').split(':')[0]);
   out.push(
-    section('9. Прочее', [
+    section('8. Прочее', [
       // From a file Claude Code saved, the trimmed output (up to 16k) replaces a 2KB preview: it adds
       // characters on purpose (the failures, not the head), so it is counted apart, not as removed.
       `Обрезка: ${trimmed.length - fromFile.length} выводов, убрано ${k(trimmed.filter((e) => !e.trim.persisted).reduce((a, e) => a + Math.max(0, e.trim.charsBefore - e.trim.charsAfter), 0))} символов, экономия ${usd(t.bySource.trim)}; из сохранённых Claude Code файлов: ${fromFile.length} (вместо превью 2KB добавлено ${k(fromFile.reduce((a, e) => a + Math.max(0, e.trim.charsAfter - e.trim.charsBefore), 0))} символов, из ${k(fromFile.reduce((a, e) => a + (e.trim.fullChars ?? 0), 0))} полного вывода).`,

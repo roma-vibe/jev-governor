@@ -315,14 +315,6 @@ export type GovernorConfig = {
     /** Node binary used by `/jevg ui` (PATH lookup when bare). */
     nodePath: string;
   };
-  /** How the savings page counts. */
-  savings: {
-    /** Share of a turn one effort level is worth (estimate; the A/B runs showed ~0.3). */
-    effortFactor: number;
-    /** What sessions run on without the mod, for ledger entries older than the base fields. */
-    defaultBaseModel: string;
-    defaultBaseEffort: Effort;
-  };
   /** Reserved for the Codex provider (not in v1). */
   codex: { enabled: boolean };
 };
@@ -407,6 +399,7 @@ export type LedgerKind =
   | 'window'
   | 'memory'
   | 'tools'
+  | 'mod-call'
   | 'error';
 
 /** One line of ledger/<YYYY-MM-DD>/<session>.jsonl. */
@@ -454,6 +447,19 @@ export type LedgerEntry = {
     cacheWrite: number;
     /** The part of the above from requests whose prompt was over 100K tokens (Haiku 5.5's long rate card); absent when none was. */
     long?: { input: number; output: number; cacheRead: number; cacheWrite: number; steps: number };
+  };
+  /**
+   * `mod-call`: one model call the mod made itself and what it cost in tokens: a specialist draft
+   * or merge, autosave of facts and its check, command descriptions, a handoff brief (a fork of
+   * the main chat).
+   */
+  call?: {
+    purpose: 'draft' | 'merge' | 'autosave' | 'autosave-check' | 'describe' | 'handoff';
+    model: string;
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
   };
   /** `usage`: summed from the turn's steps (0.3.4 on), or the turn's own figure, which starts over at a compaction inside the turn. */
   usageFrom?: 'steps' | 'turn';

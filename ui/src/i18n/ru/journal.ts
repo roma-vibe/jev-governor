@@ -21,6 +21,7 @@ export default {
   'mid-turn window': 'окно посреди хода',
   'window: auto-compaction window per session': 'window: окно автосжатия в сессии',
   'tools: long unused tools behind ToolSearch': 'tools: длинные неиспользуемые инструменты за ToolSearch',
+  'mod-call: the mod’s own model calls and their tokens': 'mod-call: собственные вызовы моделей мода и их токены',
   '{n} characters out of every request: {names}': '{n} символов убрано из каждого запроса: {names}',
   'Claude Code measures against {n}': 'Claude Code считает от {n}',
   'source {source}': 'источник {source}',
@@ -100,4 +101,5 @@ export default {
   "handoff brief saved": "бриф переноса сохранён",
   "memory server started": "сервер памяти запущен",
   "memory tool refused: {tool}": "инструмент памяти отклонён: {tool}",
+  '{purpose} on {model}: in {input} · out {output} · cache {read}/{write}': '{purpose} на {model}: вход {input} · выход {output} · кэш {read}/{write}',
 } as Record<string, string>;

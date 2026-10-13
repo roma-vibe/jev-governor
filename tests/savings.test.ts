@@ -29,57 +29,62 @@ describe('prices', () => {
 });
 
 describe('computeSavings', () => {
-  it('counts Sonnet instead of Opus as exact savings and the opposite as spend', () => {
-    const down = usage(1, 'claude-sonnet-5-5', { baseModel: 'claude-opus-5-5' });
-    const up = usage(2, 'claude-opus-5-5', { baseModel: 'claude-sonnet-5-5' });
+  it('takes the model and effort as given: no saving or cost from the choice', () => {
+    const down = usage(1, 'claude-sonnet-5-5', { baseModel: 'claude-opus-5-5', baseEffort: 'xhigh', effort: 'medium' });
+    const up = usage(2, 'claude-opus-5-5', { baseModel: 'claude-haiku-5-5', baseEffort: 'low', effort: 'xhigh' });
     const r = computeSavings([down, up]);
-    const sonnet = usageCost(down.usage!, 'sonnet', true);
-    const opus = usageCost(down.usage!, 'opus', true);
-    expect(r.totals.bySource.model).toBeCloseTo(opus - sonnet - (opus - sonnet));
-    expect(r.events.find((e) => e.toModel === 'sonnet')!.amount).toBeCloseTo(opus - sonnet);
-    expect(r.events.find((e) => e.toModel === 'opus')!.amount).toBeCloseTo(sonnet - opus);
-  });
-
-  it('charges a warm-cache switch for the context it rewrote, both ways', () => {
-    // The mod moves a warm 100k Opus chat to Sonnet: the first Sonnet turn writes the context.
-    const down: LedgerEntry = { ts: at(1), session: S, kind: 'turn', scope: 'main', model: 'claude-sonnet-5-5', prevModel: 'claude-opus-5-5', switched: true, rewrite: 100_000 };
-    const turnDown = usage(2, 'claude-sonnet-5-5', {
-      baseModel: 'claude-opus-5-5',
-      usage: { model: 'claude-sonnet-5-5', input: 0, output: 2_000, cacheRead: 0, cacheWrite: 105_000 },
-    });
-    // Later it moves back: the Opus turn writes it again, where Opus all along would have read it.
-    const up: LedgerEntry = { ts: at(3), session: S, kind: 'turn', scope: 'main', model: 'claude-opus-5-5', prevModel: 'claude-sonnet-5-5', switched: true, rewrite: 110_000 };
-    const turnUp = usage(4, 'claude-opus-5-5', {
-      baseModel: 'claude-opus-5-5',
-      usage: { model: 'claude-opus-5-5', input: 0, output: 2_000, cacheRead: 0, cacheWrite: 112_000 },
-    });
-    const r = computeSavings([down, turnDown, up, turnUp]);
-    const first = r.events.find((e) => e.source === 'model' && e.toModel === 'sonnet');
-    const second = r.events.find((e) => e.source === 'model' && e.toModel === 'opus');
-    // Opus would have read the 100k ($0.02) and written 5k ($0.04): $0.10 with the output, against
-    // $0.44 on Sonnet. It was a cost, not the +$0.44 a plain re-pricing shows.
-    expect(first!.amount).toBeCloseTo((2_000 * 20 + 100_000 * 0.2 + 5_000 * 8) / 1e6 - (2_000 * 10 + 105_000 * 4) / 1e6);
-    expect(first!.amount).toBeLessThan(0);
-    expect(first!.rewrite).toBe(100_000);
-    expect(second).toMatchObject({ fromModel: 'sonnet', toModel: 'opus', rewrite: 110_000 });
-    expect(second!.amount).toBeCloseTo(-(110_000 * (8 - 0.2)) / 1e6);
+    expect(r.events).toHaveLength(0);
+    expect(r.totals.net).toBe(0);
+    expect(r.totals.actual).toBeCloseTo(usageCost(down.usage!, 'sonnet', true) + usageCost(up.usage!, 'opus', true));
+    expect(r.totals.withoutMod).toBeCloseTo(r.totals.actual);
+    // Listed apart, for orientation.
+    expect(r.routing.main.map((x) => `${x.model}·${x.effort}`)).toEqual(['opus·xhigh', 'sonnet·medium']);
+    expect(r.routing.main[0]).toMatchObject({ turns: 1, steps: 4 });
   });
 
   it('leaves turns the mod did not route out of what it managed', () => {
-    const r = computeSavings([usage(1, 'claude-sonnet-5-5', { unrouted: true, baseModel: 'claude-sonnet-5-5' }), usage(2, 'claude-opus-5-5', { baseModel: 'claude-opus-5-5' })]);
+    const r = computeSavings([usage(1, 'claude-sonnet-5-5', { unrouted: true }), usage(2, 'claude-opus-5-5')]);
     expect(r.totals.turns).toBe(1);
     expect(r.totals.actual).toBeCloseTo(usageCost(usage(2, 'claude-opus-5-5').usage!, 'opus', true));
   });
 
-  it('estimates lower effort separately, on the output only', () => {
-    const r = computeSavings([usage(1, 'claude-opus-5-5', { baseModel: 'claude-opus-5-5', baseEffort: 'xhigh', effort: 'high' })]);
-    const output = r.totals.cost.output;
-    expect(output).toBeCloseTo((5_000 * 20) / 1e6);
-    expect(r.totals.exact).toBe(0);
-    expect(r.totals.estimated).toBeCloseTo((output * 0.3) / 0.7);
-    // Cache reads (200k) are not scaled: they are most of the turn and effort barely moves them.
-    expect(r.totals.estimated).toBeLessThan(r.totals.actual * 0.3);
-    expect(r.totals.withoutMod).toBeCloseTo(r.totals.actual + (output * 0.3) / 0.7);
+  it('values tools put behind ToolSearch by every later request of the chat, compactions or not', () => {
+    const tools: LedgerEntry = { ts: at(1), session: S, kind: 'tools', tools: { deferred: ['Artifact', 'Workflow'], chars: 35_000 } };
+    const cut: LedgerEntry = { ts: at(3), session: S, kind: 'compact', compaction: { charsBefore: 1, charsAfter: 1, ratio: 0, requests: 1, reason: 'threshold' } };
+    const sub = usage(4, 'claude-sonnet-5-5', { scope: 'subagent', agentId: 'a', steps: 50 });
+    const r = computeSavings([tools, usage(2, 'claude-sonnet-5-5', { steps: 4 }), cut, usage(5, 'claude-sonnet-5-5', { steps: 6 }), sub]);
+    const ev = r.events.find((e) => e.source === 'tools')!;
+    expect(ev).toMatchObject({ tokens: 10_000, laterRequests: 2 + 6, deferred: 2, estimate: false });
+    expect(ev.amount).toBeCloseTo((10_000 * (8 * 0.2 + 4)) / 1e6);
+    // Its tokens are not removed from the context: they never entered it.
+    expect(r.totals.tokensRemoved).toBe(0);
+  });
+
+  it('deducts the mod’s own model calls and Jev from what it saved', () => {
+    const call = (purpose: NonNullable<LedgerEntry['call']>['purpose'], model: string, m: number): LedgerEntry => ({
+      ts: at(m),
+      session: S,
+      kind: 'mod-call',
+      applied: false,
+      call: { purpose, model, input: 10_000, output: 1_000, cacheRead: 0, cacheWrite: 0 },
+    });
+    const trim: LedgerEntry = {
+      ts: at(1),
+      session: S,
+      kind: 'trim',
+      scope: 'main',
+      jevCost: 0.002,
+      trim: { tool: 'Bash', charsBefore: 35_000, charsAfter: 3_500, linesBefore: 900, linesAfter: 40, outcome: 'tests passed', jevChunks: 0 },
+    };
+    const r = computeSavings([trim, usage(2, 'claude-sonnet-5-5', { steps: 4 }), call('autosave', 'claude-haiku-5-5', 3), call('draft', 'claude-sonnet-5-5', 4)]);
+    const haiku = (10_000 * 0.1 + 1_000 * 0.5) / 1e6;
+    const sonnet = (10_000 * 2 + 1_000 * 10) / 1e6;
+    expect(r.totals.calls).toBeCloseTo(haiku + sonnet);
+    expect(r.totals.jev).toBeCloseTo(0.002);
+    expect(r.totals.spent).toBeCloseTo(haiku + sonnet + 0.002);
+    expect(r.totals.net).toBeCloseTo(r.totals.saved - r.totals.spent);
+    expect(r.byDay[0]!.spent).toBeCloseTo(r.totals.spent);
+    expect(r.events.filter((e) => e.source === 'calls').map((e) => e.purpose).sort()).toEqual(['autosave', 'draft']);
   });
 
   it('values a trim by the requests that would have re-read it, until a compaction', () => {
@@ -165,28 +170,17 @@ describe('computeSavings', () => {
     expect(computeSavings([trim, later, cut, after]).events.find((e) => e.source === 'trim')!.laterRequests).toBe(2);
   });
 
-  it('ignores shadow sessions and skipped compactions', () => {
+  it('ignores shadow sessions and skipped compactions, and breaks the cost down', () => {
     const r = computeSavings([
-      usage(1, 'claude-sonnet-5-5', { baseModel: 'claude-opus-5-5', applied: false }),
+      usage(1, 'claude-sonnet-5-5', { applied: false }),
       { ts: at(2), session: S, kind: 'compact', text: 'skipped (return)', compaction: { charsBefore: 10, charsAfter: 10, ratio: 0, requests: 0, fallback: 'reduction 0% below 15%' } },
+      usage(3, 'claude-sonnet-5-5'),
     ]);
     expect(r.totals.exact).toBe(0);
-    expect(r.totals.turns).toBe(0);
-  });
-
-  it('marks what rests on the assumed baseline and breaks the cost down', () => {
-    const legacy = usage(1, 'claude-sonnet-5-5');
-    const recorded = usage(2, 'claude-sonnet-5-5', { baseModel: 'claude-opus-5-5', baseEffort: 'high', effort: 'high' });
-    const r = computeSavings([legacy, recorded], { defaultBase: { model: 'claude-opus-5-5', effort: 'xhigh' } });
-    const model = r.events.filter((e) => e.source === 'model');
-    expect(model).toHaveLength(2);
-    expect(model.find((e) => e.ts === legacy.ts)!.assumed).toBe('opus·xhigh');
-    expect(model.find((e) => e.ts === recorded.ts)!.assumed).toBeUndefined();
-    expect(r.totals.assumedTurns).toBe(1);
-    expect(r.totals.assumed).toBeCloseTo(model.find((e) => e.ts === legacy.ts)!.amount);
+    expect(r.totals.turns).toBe(1);
     const c = r.totals.cost;
-    expect(c.cacheRead).toBeCloseTo((2 * 200_000 * 0.2) / 1e6);
-    expect(c.output).toBeCloseTo((2 * 5_000 * 10) / 1e6);
+    expect(c.cacheRead).toBeCloseTo((200_000 * 0.2) / 1e6);
+    expect(c.output).toBeCloseTo((5_000 * 10) / 1e6);
     expect(c.input + c.output + c.cacheRead + c.cacheWrite).toBeCloseTo(r.totals.actual);
   });
 });

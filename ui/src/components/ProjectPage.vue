@@ -126,10 +126,10 @@ const savingsTiles = computed(() => {
   const totals = savings.value?.totals;
   if (!totals) return [];
   return [
-    { label: t('Exact'), value: fmtMoney(totals.exact), tone: moneyTone(totals.exact) },
-    { label: t('Plus estimated'), value: `≈ ${fmtMoney(totals.estimated)}`, tone: moneyTone(totals.estimated) },
-    { label: 'Jev', value: fmtMoney(totals.jev), tone: '' },
+    { label: t('Saved'), value: `${totals.estimated !== 0 ? '≈ ' : ''}${fmtMoney(totals.saved)}`, tone: moneyTone(totals.saved) },
+    { label: t('Spent by the mod'), value: fmtMoney(totals.spent), tone: '' },
     { label: t('Net gain'), value: fmtMoney(totals.net), tone: moneyTone(totals.net) },
+    { label: t('Cost'), value: fmtMoney(totals.actual), tone: '' },
   ];
 });
 const savingsEmpty = computed(() => !!savings.value && savings.value.totals.turns === 0 && savings.value.eventCount === 0);

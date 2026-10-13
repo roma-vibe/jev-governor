@@ -23,6 +23,7 @@
   ],
   "exclude": [
     "tests/projects.test.ts",
-    "tests/i18n.test.ts"
+    "tests/i18n.test.ts",
+    "tests/reset.test.ts"
   ]
 }

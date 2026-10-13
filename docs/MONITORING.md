@@ -33,7 +33,6 @@ node scripts/monitor.mjs --days 1
 
 `--since 2026-10-05` takes everything from that date, `--since 2026-10-06T09:13` — from that minute, `--since v0.2.2` — from when the version landed in `main` (by git; the live mod is loaded from `main`), so that the old version is not mixed with the new one; `--data` and `--projects` change the ledger and transcript folders; `--help` prints usage. At the end of the report are conclusions: which thresholds to change. Besides the questions below, it counts:
 - sessions without a mod ledger (the mod did not load; should be 0);
-- `turn` and `usage` records without the `baseModel` / `baseEffort` baseline (savings for them are based on an assumption);
 - user corrections after Sonnet and Opus, after low/medium and high (the `correction` question), your `/model` and effort changes (`override`);
 - accesses to pruned content per compaction: `pruned/` reads and reruns (`rerun-after-prune`); reads of Claude Code's saved outputs (`tool-results/`) are separate, not counted;
 - compaction started via `/compact` in the app (`compaction.via`);

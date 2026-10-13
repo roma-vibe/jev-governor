@@ -20,9 +20,10 @@ import { DEFAULT_CONFIG, expandHome, resolveConfig } from '../hooks/lib/config.t
 import { parseLang, setFallbackLang, tr, withLang } from './lib/i18n.ts';
 import { jevAsker, noul, type HttpLike } from '../hooks/lib/jev.ts';
 import { LIMITS, NAME_RE, sanitizeAgent, sanitizeSkill, uniqueName } from '../hooks/lib/registry.ts';
-import { computeSavings, familyOf, usageCost, type SavingEvent, type SavingSource, type SavingsOptions } from '../hooks/lib/savings.ts';
+import { computeSavings, familyOf, SPEND_SOURCES, usageCost, type SavingEvent, type SavingSource } from '../hooks/lib/savings.ts';
 import type { AgentRecord, DraftRecord, GovernorConfig, LedgerEntry, MergeRequest, SkillRecord } from '../hooks/lib/types.ts';
 import { pricable } from './lib/pricable.ts';
+import { afterReset, readReset } from './lib/reset.ts';
 import { createProjects, entriesOfProject } from './lib/projects.ts';
 
 const VERSION = '0.3.10';
@@ -33,7 +34,7 @@ const HOME = os.homedir();
 const BODY_LIMIT = 256 * 1024;
 const DAY_MS = 86_400_000;
 const DRAFT_ID_RE = /^[a-z0-9-]{6,40}$/;
-const LEDGER_KINDS = new Set(['turn', 'subagent', 'usage', 'compact', 'agent-created', 'trim', 'output-read', 'command', 'handoff', 'hint', 'error']);
+const LEDGER_KINDS = new Set(['turn', 'subagent', 'usage', 'compact', 'agent-created', 'trim', 'output-read', 'command', 'handoff', 'hint', 'tools', 'memory', 'mod-call', 'error']);
 
 // ------------------------------------------------------------------- CLI --
 
@@ -313,6 +314,7 @@ async function loadLedger(days: number): Promise<LedgerEntry[]> {
   } catch {
     return [];
   }
+  const reset = await readReset(DATA);
   const all: LedgerEntry[] = [];
   for (const day of dayDirs) {
     let files: string[] = [];
@@ -324,7 +326,7 @@ async function loadLedger(days: number): Promise<LedgerEntry[]> {
     for (const name of files) {
       try {
         for (const entry of await readLedgerFile(path.join(root, day, name))) {
-          if (Date.parse(entry.ts) >= cutoff) all.push(entry);
+          if (Date.parse(entry.ts) >= cutoff && afterReset(entry, reset)) all.push(entry);
         }
       } catch {
         // file vanished or unreadable
@@ -542,28 +544,23 @@ function computeStats(entries: readonly LedgerEntry[], days: number): LedgerStat
 const SAVINGS_EVENT_CAP = 500;
 /** Window of the ledger the session -> project map is read from when a report is limited to one project. */
 const SESSION_MAP_DAYS = 30;
-const SAVING_SOURCES: readonly SavingSource[] = ['model', 'effort', 'trim', 'compact', 'jev'];
+const SAVING_SOURCES: readonly SavingSource[] = ['compact', 'trim', 'tools', 'jev', 'calls'];
 
-const savingsOptions = (config: GovernorConfig): SavingsOptions => ({
-  effortFactor: config.savings.effortFactor,
-  defaultBase: { model: config.savings.defaultBaseModel, effort: config.savings.defaultBaseEffort },
-});
+type SavingsRow = { exact: number; estimated: number; spent: number; actual: number };
 
-type SavingsRow = { exact: number; estimated: number; jev: number; actual: number };
-
-/** Per project folder name ('' = unknown): what the mod saved and what the managed turns cost. */
+/** Per project folder name ('' = unknown): what the mod saved and spent, and what the managed turns cost. */
 function savingsByProject(entries: readonly LedgerEntry[], events: readonly SavingEvent[]): Record<string, SavingsRow> {
   const out = Object.create(null) as Record<string, SavingsRow>;
-  const row = (name: string) => (out[name] ??= { exact: 0, estimated: 0, jev: 0, actual: 0 });
+  const row = (name: string) => (out[name] ??= { exact: 0, estimated: 0, spent: 0, actual: 0 });
   for (const ev of events) {
     const r = row(ev.project ?? '');
-    if (ev.source === 'jev') r.jev -= ev.amount;
+    if (SPEND_SOURCES.includes(ev.source)) r.spent -= ev.amount;
     else if (ev.estimate) r.estimated += ev.amount;
     else r.exact += ev.amount;
   }
   for (const e of entries) {
     // `entries` are pricable: every `usage` entry has its usage.
-    if (e.applied === false || e.kind !== 'usage' || !e.usage) continue;
+    if (e.applied === false || e.kind !== 'usage' || !e.usage || e.unrouted) continue;
     const ran = familyOf(e.usage.model);
     if (ran) row(e.project ?? '').actual += usageCost(e.usage, ran, e.scope !== 'subagent');
   }
@@ -583,7 +580,7 @@ async function savingsReport(days: number, projectId: string | undefined) {
     scope = entriesOfProject(project, entries, mapping);
   }
   const clean = scope.filter(pricable);
-  const report = computeSavings(clean, savingsOptions(config));
+  const report = computeSavings(clean);
   const estimatedBySource = Object.fromEntries(SAVING_SOURCES.map((s) => [s, 0])) as Record<SavingSource, number>;
   for (const ev of report.events) if (ev.estimate) estimatedBySource[ev.source] += ev.amount;
   return {
@@ -593,6 +590,7 @@ async function savingsReport(days: number, projectId: string | undefined) {
     // The part of each source's total that is an estimate (compaction mixes both).
     estimatedBySource,
     byDay: report.byDay,
+    routing: report.routing,
     eventCount: report.events.length,
     events: report.events.slice(0, SAVINGS_EVENT_CAP),
     ...(project ? {} : { byProject: savingsByProject(clean, report.events) }),
@@ -1088,10 +1086,10 @@ async function api(req: IncomingMessage, res: ServerResponse, segments: string[]
 
   if (resource === 'stats' && !id && method === 'GET') {
     const days = clampInt(query.get('days'), 7, 1, 90);
-    const [entries, config] = await Promise.all([loadLedger(days), loadConfig()]);
+    const entries = await loadLedger(days);
     const stats = computeStats(entries, days);
-    const { exact, estimated, jev, net, actual, withoutMod } = computeSavings(entries.filter(pricable), savingsOptions(config)).totals;
-    return send(res, 200, { ...stats, savings: { exact, estimated, jev, net, actual, withoutMod } });
+    const { saved, estimated, spent, net, actual, withoutMod } = computeSavings(entries.filter(pricable)).totals;
+    return send(res, 200, { ...stats, savings: { saved, estimated, spent, net, actual, withoutMod } });
   }
 
   if (resource === 'savings' && !id && method === 'GET') {

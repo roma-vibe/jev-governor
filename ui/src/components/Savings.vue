@@ -4,7 +4,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, type ProjectSummary, type SavingEvent, type SavingSource, type SavingsRow, type SavingsView } from '../api.ts';
 import { fmtMoney, fmtPct, fmtSigned, fmtTime, moneyTone, projectName } from '../format.ts';
 import { locale, t } from '../i18n/index.ts';
-import { describeEvent, getSources, sourceLabel } from '../savings.ts';
+import { describeEvent, familyLabel, getSources, sourceLabel } from '../savings.ts';
 import { store } from '../store.ts';
 
 const periods = computed(() =>
@@ -47,12 +47,9 @@ watch(filter, () => (shown.value = 50));
 
 // ---- top cards
 
-const effortPercent = computed(() => Math.round((store.config?.savings.effortFactor ?? 0.3) * 100));
-
 const totals = computed(() => data.value?.totals);
-const saved = computed(() => (totals.value ? totals.value.exact + totals.value.estimated : 0));
-/** Share of what the managed turns would have cost without the mod. */
-const savedShare = computed(() => (totals.value && totals.value.withoutMod > 0 ? saved.value / totals.value.withoutMod : null));
+/** Share of what the managed turns would have cost without the mod's context work. */
+const savedShare = computed(() => (totals.value && totals.value.withoutMod > 0 ? totals.value.net / totals.value.withoutMod : null));
 const shareText = computed(() => {
   const share = savedShare.value;
   return share === null ? '—' : fmtPct(share, Math.abs(share) < 0.1 ? 1 : 0);
@@ -63,48 +60,60 @@ const cards = computed(() => {
   if (!tot) return [];
   return [
     {
-      label: t('Saved (exact)'),
-      value: fmtMoney(tot.exact),
-      tone: moneyTone(tot.exact),
-      sub: t('measured from the journal: model, trimming, compaction'),
-      title: t('The same tokens at the prices of the model Claude Code would have used without the mod; trimming and compaction are counted by how many times the removed content would have had to be re-read. A negative number is a surcharge for quality (Opus instead of Sonnet).'),
+      label: t('Saved'),
+      value: `${tot.estimated !== 0 ? '≈ ' : ''}${fmtMoney(tot.saved)}`,
+      tone: moneyTone(tot.saved),
+      sub: t('compaction, trimming, tools behind ToolSearch'),
+      title: t('What the mod removed from the context, priced on the model that actually ran: the removed tokens × the requests that would have re-read them, minus what had to be written to the cache again.'),
     },
     {
-      label: t('Plus estimated'),
-      value: `≈ ${fmtMoney(tot.estimated)}`,
-      tone: moneyTone(tot.estimated),
-      sub: t('estimate: lower effort and compaction without a Claude Code summary'),
-      title: t('An estimate, not a measurement: at a lower effort level the model thinks and writes less, so the turn’s output is smaller by about the share set in “Savings calculation” per level (cache reads are not counted: effort barely moves them), and when Claude Code asked for compaction, the mod did it itself and the paid summary was not needed.'),
-    },
-    {
-      label: t('Spent on Jev'),
-      value: fmtMoney(tot.jev),
+      label: t('Spent by the mod'),
+      value: fmtMoney(tot.spent),
       tone: '',
-      sub: t('requests to Jev, deducted from the benefit'),
-      title: t('The cost of requests to Jev: model and effort decisions, trimming estimates.'),
+      sub: t('Jev {jev} · own model calls {calls}', { jev: fmtMoney(tot.jev), calls: fmtMoney(tot.calls) }),
+      title: t('Requests to Jev and the model calls the mod makes itself: specialist drafts and merges, saving facts from the dialog, command descriptions, handoff briefs.'),
     },
     {
       label: t('Net benefit'),
       value: fmtMoney(tot.net),
       tone: moneyTone(tot.net),
-      sub: t('exact + estimate − Jev'),
-      title: t('Saved (exact) + plus estimated − spent on Jev.'),
+      sub: t('saved − spent by the mod'),
+      title: t('Saved minus what the mod spent.'),
     },
     {
       label: t('Actual cost'),
       value: fmtMoney(tot.actual),
       tone: '',
       sub: t('{n} {n#turn|turns} managed by the mod', { n: tot.turns }),
-      title: t('What the tokens of the turns the mod managed cost (excluding shadow mode), at the same prices.'),
+      title: t('What the tokens of the turns the mod managed cost (excluding shadow mode), on the models they ran on.'),
     },
     {
       label: t('Without the mod it would be ≈'),
       value: `≈ ${fmtMoney(tot.withoutMod)}`,
       tone: '',
-      sub: savedShare.value === null ? t('no data') : t('savings {share} ({amount})', { share: shareText.value, amount: fmtMoney(saved.value) }),
-      title: t('Actual cost + saved (exact) + plus estimated. The percentage is the share saved (exact + estimate) of this sum; Jev is not deducted.'),
+      sub: savedShare.value === null ? t('no data') : t('net savings {share}', { share: shareText.value }),
+      title: t('Actual cost + saved: the same turns on the same models, without compaction, trimming and deferred tools. The percentage is the net benefit of this sum.'),
+    },
+    {
+      label: t('Removed from the context'),
+      value: tot.tokensRemoved.toLocaleString(locale()),
+      tone: '',
+      sub: t('tokens, by compaction and trimming'),
+      title: t('Tokens the mod took out of the context; each of them would otherwise have been re-read by every later request.'),
     },
   ];
+});
+
+// ---- routing: which models and efforts ran, not priced against anything
+
+const routing = computed(() => {
+  const r = data.value?.routing;
+  if (!r) return [];
+  const block = (rows: typeof r.main, label: string) => {
+    const sum = rows.reduce((a, x) => a + x.cost, 0);
+    return { label, rows: rows.map((x) => ({ ...x, name: `${familyLabel(x.model)}${x.effort ? ` · ${x.effort}` : ''}`, share: sum > 0 ? x.cost / sum : 0 })) };
+  };
+  return [block(r.main, t('Main chat')), block(r.subagent, t('Subagents'))].filter((b) => b.rows.length > 0);
 });
 
 // ---- what the managed turns cost, by token kind
@@ -123,9 +132,6 @@ const costRows = computed(() => {
   const sum = c.input + c.output + c.cacheRead + c.cacheWrite;
   return costKinds().map((k) => ({ ...k, value: c[k.key], share: sum > 0 ? c[k.key] / sum : 0 }));
 });
-
-/** The baseline that stood in for entries without baseModel / baseEffort, as the events name it. */
-const assumedBase = computed(() => data.value?.events.find((e) => e.assumed)?.assumed);
 
 const empty = computed(() => !!data.value && data.value.totals.turns === 0 && data.value.eventCount === 0);
 
@@ -178,7 +184,7 @@ const dayRows = computed(() => {
   const gain = (v: number) => Math.max(0, v);
   const loss = (v: number) => Math.max(0, -v);
   const maxGain = Math.max(0, ...d.byDay.map((x) => gain(x.exact) + gain(x.estimated)));
-  const maxLoss = Math.max(0, ...d.byDay.map((x) => Math.max(loss(x.exact) + loss(x.estimated), x.jev)));
+  const maxLoss = Math.max(0, ...d.byDay.map((x) => Math.max(loss(x.exact) + loss(x.estimated), x.spent)));
   const span = maxGain + maxLoss || 1;
   const zero = (maxLoss / span) * 100;
   return [...d.byDay]
@@ -202,14 +208,14 @@ const dayRows = computed(() => {
           bars.push({ ...sliver(down, width), cls });
         }
       }
-      const jevWidth = (x.jev / span) * 100;
+      const spentWidth = (x.spent / span) * 100;
       return {
         day: x.day,
         label: dayLabel(x.day),
         x,
         zero,
         bars,
-        jev: x.jev > 0 ? sliver(zero - jevWidth, jevWidth) : null,
+        spent: x.spent > 0 ? sliver(zero - spentWidth, spentWidth) : null,
       };
     });
 });
@@ -295,13 +301,6 @@ const visibleEvents = computed(() => filtered.value.slice(0, shown.value));
         </li>
       </ul>
 
-      <p v-if="totals.assumedTurns > 0" class="card border-amber-300 text-sm text-amber-900 dark:border-amber-700 dark:text-amber-200">
-        <b>≈ {{ fmtSigned(totals.assumed) }}</b> {{ t('was calculated from an assumption:') }}
-        {{ t('{n} {n#turn has|turns have} no “without the mod” model and effort in the journal (written by older mod code), and for them it is assumed that without the mod it would have been', { n: totals.assumedTurns }) }}
-        <b>{{ assumedBase ?? `${store.config?.savings.defaultBaseModel}·${store.config?.savings.defaultBaseEffort}` }}</b>
-        {{ t('(Settings, “Savings calculation” section). If you usually work at lower effort, the savings are overstated. Such rows in events are marked “assumption”.') }}
-      </p>
-
       <section v-if="costRows.length > 0 && totals.actual > 0" class="card" :aria-label="t('Cost breakdown')">
         <h3 class="card-title">{{ t('Cost breakdown') }} · {{ fmtMoney(totals.actual) }}</h3>
         <ul class="space-y-3">
@@ -327,21 +326,24 @@ const visibleEvents = computed(() => filtered.value.slice(0, shown.value));
             }}
           </p>
           <p>
-            <b>{{ t('Exact') }}</b> {{ t('(computed from the journal):') }}
+            <b>{{ t('Model and effort are not counted.') }}</b>
+            {{ t('Which model and effort a turn ran on is taken as given: you could have chosen them yourself, so the choice is neither a saving nor a cost. Every amount below is priced on the model that actually did the work; the models and efforts are shown apart, for orientation.') }}
+          </p>
+          <p>
+            <b>{{ t('Saved') }}</b>:
             {{
-              t('the same turn tokens at the price of the model Claude Code would have used without the mod, minus their price on the model that did the work. A negative value is a surcharge for quality (Opus instead of Sonnet). For trimming and compaction: the removed tokens × the number of requests that would have re-read them from the cache, minus what had to be written to the cache again.')
+              t('compaction and trimming: the removed tokens × the number of later requests that would have re-read them from the cache, minus what had to be written to the cache again. Tools behind ToolSearch: their definitions left the start of every later request of that chat.')
+            }}
+            {{ t('Compactions that Claude Code asked for count as estimates: the mod did them itself, and the summary that would have cost money was not needed.') }}
+          </p>
+          <p>
+            <b>{{ t('Spent by the mod') }}</b>:
+            {{
+              t('requests to Jev and the mod’s own model calls (specialist drafts and merges, saving facts from the dialog, command descriptions, handoff briefs) are deducted (“Net benefit” = saved − spent). They cost money in any mode and are always counted. Sessions in shadow mode are not part of the savings or the “Actual cost”: the mod changed nothing there.')
             }}
           </p>
           <p>
-            <b>{{ t('Estimated') }}</b>:
-            {{ t('at a lower effort level the model thinks and writes less; one level ≈ {percent}% of the turn’s output (set in Settings, “Savings calculation” section). Only the output is counted: in long chats most of a turn is cache reads, which effort barely changes.', { percent: effortPercent }) }}
-            {{ t('Compactions that Claude Code asked for also count as estimates: the mod did them itself, and the summary that would have cost money was not needed.') }}
-          </p>
-          <p>
-            <b>{{ t('Jev') }}</b>:
-            {{
-              t('the cost of requests to Jev is deducted from the benefit (“Net benefit” = exact + estimate − Jev). Requests to Jev cost money in any mode and are always counted. Sessions in shadow mode are not part of the savings or the “Actual cost”: the mod changed nothing there.')
-            }}
+            {{ t('Not counted in dollars, because it cannot be measured without a second run: what long-term memory spared the model from re-exploring, and the subagent cache note.') }}
           </p>
         </div>
       </details>
@@ -378,7 +380,7 @@ const visibleEvents = computed(() => filtered.value.slice(0, shown.value));
           <p class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400" aria-hidden="true">
             <span><i class="mr-1 inline-block h-2 w-3 rounded-sm bg-emerald-500 align-middle" />{{ t('exact') }}</span>
             <span><i class="hatch mr-1 inline-block h-2 w-3 rounded-sm bg-emerald-500 align-middle opacity-60" />{{ t('estimated') }}</span>
-            <span><i class="mr-1 inline-block h-1 w-3 rounded-sm bg-red-600 align-middle" />{{ t('Jev') }}</span>
+            <span><i class="mr-1 inline-block h-1 w-3 rounded-sm bg-red-600 align-middle" />{{ t('spent by the mod') }}</span>
           </p>
         </div>
         <p v-if="dayRows.length === 0" class="text-sm text-zinc-500 dark:text-zinc-400">{{ t('No data for the period.') }}</p>
@@ -400,18 +402,37 @@ const visibleEvents = computed(() => filtered.value.slice(0, shown.value));
             </div>
             <div class="relative h-1">
               <div
-                v-if="row.jev"
+                v-if="row.spent"
                 class="absolute inset-y-0 bg-red-600 dark:bg-red-500"
-                :style="{ left: `${row.jev.left}%`, width: `${row.jev.width}%` }"
+                :style="{ left: `${row.spent.left}%`, width: `${row.spent.width}%` }"
               />
             </div>
             <p class="mt-0.5 text-xs text-zinc-500 tabular-nums dark:text-zinc-400">
               {{ t('exact') }} <span :class="moneyTone(row.x.exact)">{{ fmtSigned(row.x.exact) }}</span>
               · {{ t('estimated') }} <span :class="moneyTone(row.x.estimated)">≈ {{ fmtSigned(row.x.estimated) }}</span>
-              · {{ t('Jev') }} <span :class="row.x.jev > 0 ? moneyTone(-row.x.jev) : ''">{{ fmtSigned(-row.x.jev) }}</span>
+              · {{ t('spent by the mod') }} <span :class="row.x.spent > 0 ? moneyTone(-row.x.spent) : ''">{{ fmtSigned(-row.x.spent) }}</span>
             </p>
           </li>
         </ul>
+      </section>
+
+      <section v-if="routing.length > 0" class="card" :aria-label="t('Models and effort')">
+        <h3 class="card-title">{{ t('Models and effort') }}</h3>
+        <p class="help -mt-1 mb-3">{{ t('Where the turns ran and what they cost. For orientation only: not part of the savings.') }}</p>
+        <div class="grid gap-4 md:grid-cols-2">
+          <div v-for="b in routing" :key="b.label">
+            <p class="mb-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">{{ b.label }}</p>
+            <table class="w-full text-sm">
+              <tbody class="divide-y divide-zinc-200 dark:divide-zinc-800">
+                <tr v-for="r in b.rows" :key="r.name">
+                  <td class="py-1 pr-2">{{ r.name }}</td>
+                  <td class="py-1 pr-2 text-right whitespace-nowrap text-zinc-500 tabular-nums dark:text-zinc-400">{{ t('{n} {n#turn|turns}', { n: r.turns }) }}</td>
+                  <td class="py-1 text-right whitespace-nowrap tabular-nums">{{ fmtMoney(r.cost) }} · {{ fmtPct(r.share) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </section>
 
       <section v-if="projectRows.length > 0" class="card overflow-hidden p-0" :aria-label="t('By project')">
@@ -423,7 +444,7 @@ const visibleEvents = computed(() => filtered.value.slice(0, shown.value));
                 <th class="th pl-4">{{ t('Project') }}</th>
                 <th class="th text-right">{{ t('Exact') }}</th>
                 <th class="th text-right">{{ t('Estimated') }}</th>
-                <th class="th text-right">{{ t('Jev') }}</th>
+                <th class="th text-right">{{ t('Spent by the mod') }}</th>
                 <th class="th pr-4 text-right">{{ t('Cost') }}</th>
               </tr>
             </thead>
@@ -435,7 +456,7 @@ const visibleEvents = computed(() => filtered.value.slice(0, shown.value));
                 </td>
                 <td class="td text-right whitespace-nowrap tabular-nums" :class="moneyTone(p.exact)">{{ fmtMoney(p.exact) }}</td>
                 <td class="td text-right whitespace-nowrap tabular-nums" :class="moneyTone(p.estimated)">≈ {{ fmtMoney(p.estimated) }}</td>
-                <td class="td text-right whitespace-nowrap tabular-nums">{{ fmtMoney(p.jev) }}</td>
+                <td class="td text-right whitespace-nowrap tabular-nums">{{ fmtMoney(p.spent) }}</td>
                 <td class="td pr-4 text-right whitespace-nowrap tabular-nums">{{ fmtMoney(p.actual) }}</td>
               </tr>
             </tbody>
@@ -486,13 +507,6 @@ const visibleEvents = computed(() => filtered.value.slice(0, shown.value));
                     :title="t('An estimate, not a measurement')"
                   >
                     {{ t('estimate') }}
-                  </span>
-                  <span
-                    v-if="e.assumed"
-                    class="badge badge-amber ml-1"
-                    :title="t('The journal has no “without the mod” model and effort: assumed {base}', { base: e.assumed })"
-                  >
-                    {{ t('assumption') }}
                   </span>
                   <span v-if="e.scope === 'subagent'" class="badge badge-gray ml-1">{{ t('subagent') }}</span>
                 </td>

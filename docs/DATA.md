@@ -199,19 +199,24 @@ commands that lack one; a description the person edits is never replaced.
 ## Savings
 
 `computeSavings` (hooks/lib/savings.ts) turns the ledger into API-equivalent
-dollars. Exact: model choice (the same tokens on the model the turn would have
-used), trimmed and compacted tokens × the later requests that would have
-re-read them (minus a size-triggered compaction's re-write), Jev's own cost.
-A compaction Claude Code started at the mod's window (`window`, mid-turn or in a
-subagent) is exact too, priced like a threshold one in its own loop.
-Estimated: lower effort (`savings.effortFactor` of a turn's **output** per level;
-cache reads, most of a long turn, are not scaled) and Claude Code compactions
-answered by Jev (the summary call avoided). Shadow-mode
-sessions are not counted; entries older than the base fields use
-`savings.defaultBaseModel` / `defaultBaseEffort`, and the events priced that
-way carry `assumed` (the baseline that stood in), so the report can show how
-much rests on the assumption. `totals.cost` splits the managed turns' cost
-into input, output, cache reads and cache writes.
+dollars. Since 0.3.12 the model and effort a turn ran on are taken as given:
+the person could have chosen them, so the choice is neither a saving nor a
+cost, and every amount is priced on the model that actually ran. `routing`
+lists the models and efforts with their turns and cost, for orientation only.
+
+Saved, exact: trimmed and compacted tokens × the later requests that would
+have re-read them (minus a size-triggered compaction's re-write); a compaction
+Claude Code started at the mod's window (`window`, mid-turn or in a subagent)
+is priced like a threshold one in its own loop. Tools behind ToolSearch
+(`tools` entries: definitions removed from the prefix, `chars`) × the later
+requests of that chat until the next set. Saved, estimated: Claude Code
+compactions answered by Jev (the summary call avoided).
+
+Spent: Jev's own cost and the mod's own model calls (`call` entries: purpose,
+model, usage — drafts, merges, autosave and its check, command descriptions,
+handoff briefs). Spending is counted in any mode; shadow-mode sessions are not
+part of the savings or `actual`. `withoutMod` = `actual` + saved. `totals.cost`
+splits the managed turns' cost into input, output, cache reads and cache writes.
 
 ## Settings added after the first review
 

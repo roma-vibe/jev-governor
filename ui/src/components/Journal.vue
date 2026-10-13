@@ -27,6 +27,7 @@ const kinds = computed<{ value: LedgerKind | ''; label: string }[]>(() => [
   { value: 'redacted', label: t('redacted: secrets removed from requests to Jev') },
   { value: 'window', label: t('window: auto-compaction window per session') },
   { value: 'tools', label: t('tools: long unused tools behind ToolSearch') },
+  { value: 'mod-call', label: t('mod-call: the mod’s own model calls and their tokens') },
   { value: 'error', label: t('error: errors') },
 ]);
 
@@ -284,6 +285,17 @@ function details(e: LedgerEntry): string {
         .join(' · ');
     case 'tools':
       return e.tools ? t('{n} characters out of every request: {names}', { n: fmtNum(e.tools.chars), names: e.tools.deferred.join(', ') }) : '';
+    case 'mod-call':
+      return e.call
+        ? t('{purpose} on {model}: in {input} · out {output} · cache {read}/{write}', {
+            purpose: e.call.purpose,
+            model: e.call.model,
+            input: fmtNum(e.call.input),
+            output: fmtNum(e.call.output),
+            read: fmtNum(e.call.cacheRead),
+            write: fmtNum(e.call.cacheWrite),
+          })
+        : '';
     case 'error':
       return e.error ?? '';
   }

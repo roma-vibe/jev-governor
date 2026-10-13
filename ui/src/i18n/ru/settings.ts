@@ -285,21 +285,9 @@ export default {
   'MB': 'МБ',
   'If all saved outputs together exceed this, the oldest sessions are deleted whole at session start. In addition, every start deletes files older than the retention period and empty folders.':
     'Если все сохранённые выводы вместе больше этого, при старте сессии удаляются самые старые сессии целиком. Плюс каждый старт удаляет файлы старше срока хранения и пустые папки.',
-  'Savings calculation': 'Расчёт экономии',
-  'How the “Savings” tab is calculated: dollar amounts at Anthropic list prices (API equivalent), subscription limits are used up in proportion to the same tokens. These settings affect only the calculation, not how the mod works.':
-    'Как считается вкладка «Экономия»: суммы в долларах по прайс-листу Anthropic (эквивалент API), лимиты подписки расходуются пропорционально тем же токенам. Эти настройки влияют только на подсчёт, не на работу мода.',
   'Compact mid-turn and in subagents at': 'Сжимать посреди хода и в субагентах при',
   'The mod can compact only between turns. At this size Claude Code compacts by itself, also in the middle of a long turn and inside subagents, and the mod prunes it through Jev. Set as Claude Code’s auto-compaction window (CLAUDE_CODE_AUTO_COMPACT_WINDOW) for each session; a value you set in the environment yourself wins. Keep it above the threshold above. 0 means Claude Code’s own window.':
     'Сам мод умеет сжимать только между ходами. При таком размере Claude Code сжимает сам, в том числе посреди длинного хода и внутри субагентов, а мод прореживает это через Jev. Ставится как окно автосжатия Claude Code (CLAUDE_CODE_AUTO_COMPACT_WINDOW) в каждой сессии; если вы задали переменную сами, действует ваше значение. Держите выше порога выше. 0 — окно самого Claude Code.',
-  'Share of output per effort level': 'Доля вывода за уровень усилия',
-  'The share of a turn’s output saved by lowering effort by one level; about 0.3 according to the project’s A/B tests. Cache reads are not counted. Affects only the estimate.':
-    'Доля вывода хода, которую экономит снижение усилия на один уровень; по A/B-тестам проекта ≈ 0.3. Чтение кэша не считается. Влияет только на оценку.',
-  'Model without the mod': 'Модель без мода',
-  'What the sessions would have run on without the mod. Needed for old journal entries where this is not recorded.':
-    'На чём работали бы сессии без мода — нужно для старых записей журнала, где это не записано.',
-  'Effort without the mod': 'Effort без мода',
-  'The effort level the sessions would have run at without the mod; also only for old journal entries where this is not recorded.':
-    'С каким уровнем усилия работали бы сессии без мода; тоже только для старых записей журнала, где это не записано.',
   'Jev and key': 'Jev и ключ',
   'Jev model': 'Модель Jev',
   'Identifier of the Jev model for the System One API.': 'Идентификатор модели Jev для API System One.',
@@ -382,8 +370,7 @@ export default {
   'Which models and effort levels the mod picks for the main chat and subagents, and the specialist agents.': 'Какие модели и уровни effort мод выбирает для основного чата и субагентов, и агенты-специалисты.',
   'Context': 'Контекст',
   'Context compaction, handoff to a new chat, long-term memory, and trimming of large outputs.': 'Сжатие контекста, перенос в новый чат, долговременная память и обрезка больших выводов.',
-  'Projects & savings': 'Проекты и экономия',
-  'The project panel with its commands, and how the savings are counted.': 'Панель проектов с командами и подсчёт экономии.',
+  'The project panel with its commands.': 'Панель проектов с командами.',
   '{n} {n#section|sections}': '{n} {n#раздел|раздела|разделов}',
   '{n} {n#setting|settings}': '{n} {n#настройка|настройки|настроек}',
   'Successful tests and builds: short trim from':

@@ -155,7 +155,7 @@ function trimOutcomeLabel(key: TrimOutcome): string {
 const savings = computed(() => {
   const s = stats.value?.savings;
   if (!s) return null;
-  const share = s.withoutMod > 0 ? (s.exact + s.estimated) / s.withoutMod : null;
+  const share = s.withoutMod > 0 ? s.net / s.withoutMod : null;
   return { ...s, share: share === null ? '—' : fmtPct(share, Math.abs(share) < 0.1 ? 1 : 0) };
 });
 
@@ -220,19 +220,15 @@ function where(e: LedgerEntry): string {
         >
           <h3 class="card-title">{{ t('Savings') }}</h3>
           <p class="text-3xl font-semibold tabular-nums" :class="moneyTone(savings.net)">{{ fmtMoney(savings.net) }}</p>
-          <p class="help mt-0.5">{{ t('net benefit for the period: exact + estimate − Jev') }}</p>
+          <p class="help mt-0.5">{{ t('net for the period: what compaction, trimming and deferred tools saved, minus what the mod spent') }}</p>
           <dl class="mt-3 space-y-1 text-sm">
             <div class="flex justify-between gap-2">
-              <dt class="text-zinc-500 dark:text-zinc-400">{{ t('Exact') }}</dt>
-              <dd class="tabular-nums" :class="moneyTone(savings.exact)">{{ fmtMoney(savings.exact) }}</dd>
+              <dt class="text-zinc-500 dark:text-zinc-400">{{ t('Saved') }}</dt>
+              <dd class="tabular-nums" :class="moneyTone(savings.saved)">{{ savings.estimated !== 0 ? '≈ ' : '' }}{{ fmtMoney(savings.saved) }}</dd>
             </div>
             <div class="flex justify-between gap-2">
-              <dt class="text-zinc-500 dark:text-zinc-400">{{ t('Plus estimated') }}</dt>
-              <dd class="tabular-nums" :class="moneyTone(savings.estimated)">≈ {{ fmtMoney(savings.estimated) }}</dd>
-            </div>
-            <div class="flex justify-between gap-2">
-              <dt class="text-zinc-500 dark:text-zinc-400">{{ t('Spent on Jev') }}</dt>
-              <dd class="tabular-nums">{{ fmtMoney(savings.jev) }}</dd>
+              <dt class="text-zinc-500 dark:text-zinc-400">{{ t('Spent by the mod') }}</dt>
+              <dd class="tabular-nums">{{ fmtMoney(savings.spent) }}</dd>
             </div>
             <div class="flex justify-between gap-2">
               <dt class="text-zinc-500 dark:text-zinc-400">{{ t('Of the cost without the mod') }}</dt>

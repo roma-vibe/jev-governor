@@ -81,9 +81,9 @@ export type Stats = {
 };
 
 export type { SavingEvent, SavingSource };
-/** Dollars (API-equivalent). `jev` is a positive cost; `net` = exact + estimated − jev. */
-export type SavingsBrief = { exact: number; estimated: number; jev: number; net: number; actual: number; withoutMod: number };
-export type SavingsRow = { exact: number; estimated: number; jev: number; actual: number };
+/** Dollars (API-equivalent). `saved` includes `estimated`; `spent` (Jev + the mod's own model calls) is a positive cost; `net` = saved − spent. */
+export type SavingsBrief = { saved: number; estimated: number; spent: number; net: number; actual: number; withoutMod: number };
+export type SavingsRow = { exact: number; estimated: number; spent: number; actual: number };
 export type SavingsView = {
   days: number;
   /** The project id the report is limited to; null = everything. */
@@ -92,6 +92,8 @@ export type SavingsView = {
   /** The part of each source's total that is an estimate. */
   estimatedBySource: Record<SavingSource, number>;
   byDay: SavingsReport['byDay'];
+  /** Models and efforts the turns ran on: for orientation, not part of the savings. */
+  routing: SavingsReport['routing'];
   /** All events in the period; `events` holds the newest 500. */
   eventCount: number;
   events: SavingEvent[];

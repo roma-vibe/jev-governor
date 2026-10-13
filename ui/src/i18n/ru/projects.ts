@@ -109,7 +109,6 @@ export default {
   'over {days} d': 'за {days} дн',
   'Last activity': 'Последняя активность',
   Exact: 'Точно',
-  'Plus estimated': 'Ещё по оценке',
   'Net gain': 'Чистая выгода',
   Copied: 'Скопировано',
   'Could not copy: allow clipboard access.': 'Не удалось скопировать: разрешите доступ к буферу обмена.',

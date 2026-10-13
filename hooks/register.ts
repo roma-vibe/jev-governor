@@ -373,6 +373,35 @@ async function ledger($: EngineInterface, entry: Omit<LedgerEntry, 'ts' | 'sessi
   await S.ledgerChain;
 }
 
+type CallPurpose = NonNullable<LedgerEntry['call']>['purpose'];
+
+/** Logs what one of the mod's own model calls cost (`mod-call`): the savings page deducts it. */
+async function logCall($: EngineInterface, purpose: CallPurpose, model: string | undefined, usage: unknown): Promise<void> {
+  const u = usage as { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } | undefined;
+  if (!u) return;
+  const call = {
+    purpose,
+    model: model ?? (await $.session.model()),
+    input: u.input_tokens ?? 0,
+    output: u.output_tokens ?? 0,
+    cacheRead: u.cache_read_input_tokens ?? 0,
+    cacheWrite: u.cache_creation_input_tokens ?? 0,
+  };
+  if (call.input + call.output + call.cacheRead + call.cacheWrite === 0) return;
+  await ledger($, { kind: 'mod-call', call });
+}
+
+/** `$.model.complete` for the mod's own work, its tokens logged as a `mod-call`. */
+async function modComplete(
+  $: EngineInterface,
+  purpose: CallPurpose,
+  ask: Parameters<EngineInterface['model']['complete']>[0],
+): ReturnType<EngineInterface['model']['complete']> {
+  const reply = await $.model.complete(ask);
+  await logCall($, purpose, ask.model, 'usage' in reply ? reply.usage : undefined);
+  return reply;
+}
+
 async function saveRoute($: EngineInterface): Promise<void> {
   try {
     await $.store.set(`route:${S.session}`, { ...S.route, savedAt: Date.now() });
@@ -615,7 +644,7 @@ async function createAgent(
   $: EngineInterface,
   input: { title: string; task: string },
 ): Promise<{ agent?: AgentRecord; created: boolean }> {
-  const reply = await $.model.complete({
+  const reply = await modComplete($, 'draft', {
     model: S.cfg.agents.draftModel,
     system: DRAFT_SYSTEM,
     prompt: draftPrompt({
@@ -839,7 +868,7 @@ async function mergeAgents(
 ): Promise<{ agents: { keep: string; merged: string[] }[]; skills: { keep: string; merged: string[] }[] } | undefined> {
   if (await loadRegistry($)) await registerAll($);
   if ([...S.agents.values()].filter((a) => a.enabled).length < 2) return { agents: [], skills: [] };
-  const reply = await $.model.complete({
+  const reply = await modComplete($, 'merge', {
     model: S.cfg.agents.draftModel,
     system: MERGE_SYSTEM,
     prompt: mergePrompt([...S.agents.values()], [...S.skills.values()]),
@@ -1523,6 +1552,7 @@ async function forkBrief($: EngineInterface, pending: Handoff, words: number): P
     if ('usage' in reply && reply.usage) {
       const u = reply.usage;
       usage = { model: await $.session.model(), input: u.input_tokens, output: u.output_tokens, cacheRead: u.cache_read_input_tokens, cacheWrite: u.cache_creation_input_tokens };
+      await logCall($, 'handoff', usage.model, u);
     }
     if (reply.isAnswered && reply.text.trim()) brief = reply.text.trim();
     else why = reply.isAnswered ? L('бриф пустой', 'the brief is empty') : `${L('бриф не получен', 'no brief received')}: ${reply.reason}`;
@@ -1828,7 +1858,7 @@ async function processDrafts($: EngineInterface): Promise<void> {
       await $.clock.sleep(400);
       const claimed = (await readJson($, path)) as { worker?: string } | undefined;
       if (claimed?.worker !== S.session) continue;
-      const reply = await $.model.complete({
+      const reply = await modComplete($, 'draft', {
         model: S.cfg.agents.draftModel,
         system: DRAFT_SYSTEM,
         prompt: draftPrompt({
@@ -2110,15 +2140,15 @@ async function saveFromDialog($: EngineInterface, why: 'turns' | 'idle' | 'manua
     const clean = (text: string): string => redact(text).text;
     const built = extractPrompt({ project: S.cwd.split('/').filter(Boolean).pop() ?? '', turns: unread, summary, known, maxFacts: m.autoSaveMaxFacts, clean });
     turnsRead = built.used.length;
-    const ask = async (model: string, system: string, prompt: string, effort: 'low' | 'medium'): Promise<string | undefined> => {
-      const reply = await $.model.complete({ model, system, prompt, maxTokens: 1500, effort, timeoutMs: 90_000 });
+    const ask = async (purpose: CallPurpose, model: string, system: string, prompt: string, effort: 'low' | 'medium'): Promise<string | undefined> => {
+      const reply = await modComplete($, purpose, { model, system, prompt, maxTokens: 1500, effort, timeoutMs: 90_000 });
       if (!reply.isAnswered) {
         await ledger($, { kind: 'memory', memory: { action: 'extract', for: why, ok: false, error: clip(`model call failed: ${reply.reason}`, 200) } });
         return undefined;
       }
       return reply.text;
     };
-    const reply = await ask(m.autoSaveModel, extractSystem(m.autoSaveMaxFacts), built.prompt, 'medium');
+    const reply = await ask('autosave', m.autoSaveModel, extractSystem(m.autoSaveMaxFacts), built.prompt, 'medium');
     if (reply === undefined) {
       S.memory.saveFailUntil = Date.now() + AUTOSAVE_RETRY_MS;
       return none(L('Модель не ответила.', 'The model did not answer.'), false);
@@ -2127,7 +2157,7 @@ async function saveFromDialog($: EngineInterface, why: 'turns' | 'idle' | 'manua
     const offered = candidates.length;
     if (candidates.length > 0) {
       const list = candidates.map((c, i) => `${i}. [${c.scope}/${c.type}] ${c.text}`).join('\n');
-      const verdict = await ask(m.autoSaveCheckModel, CRITIC_SYSTEM, `${built.prompt.split('Answer with JSON only')[0]}\nCandidate facts:\n${list}\n\nAnswer with JSON only.`, 'medium');
+      const verdict = await ask('autosave-check', m.autoSaveCheckModel, CRITIC_SYSTEM, `${built.prompt.split('Answer with JSON only')[0]}\nCandidate facts:\n${list}\n\nAnswer with JSON only.`, 'medium');
       if (verdict === undefined) {
         S.memory.saveFailUntil = Date.now() + AUTOSAVE_RETRY_MS;
         return none(L('Проверяющий проход не ответил: ничего не сохранено, ходы прочитаны будут снова.', 'The checking pass did not answer: nothing saved, the turns will be read again.'), false);
@@ -2385,7 +2415,7 @@ async function describeAll($: EngineInterface, dir: string): Promise<void> {
     const claimed = (await readJson($, path)) as { worker?: string } | undefined;
     if (claimed?.worker !== S.session) continue;
     const items = request.items.slice(0, 60).map((i) => ({ ...i, source: i.source as never }));
-    const reply = await $.model.complete({
+    const reply = await modComplete($, 'describe', {
       model: S.cfg.agents.draftModel,
       system: describeSystem(request.lang === 'en' ? 'en' : 'ru'),
       prompt: describePrompt(request.project, items),
@@ -2936,7 +2966,7 @@ export const register: Register = (on) => {
     await ensureInit($);
     // The memory's notes on the task, asked while the plan is made and appended to the prompt
     // (the task stays first: a spawn is matched to its subagent by the prompt's start).
-    const recalling = e.fork || e.workflow ? Promise.resolve(undefined) : subagentRecall($, e.prompt, e.description);
+    const recalling = e.fork || ('workflow' in e && e.workflow) ? Promise.resolve(undefined) : subagentRecall($, e.prompt, e.description);
     const withNotes = async (): Promise<{ notes: string; memory?: NonNullable<LedgerEntry['memory']> }> => {
       const recalled = await recalling;
       return { notes: recalled?.block && !shadow() ? `\n\n${recalled.block.text}` : '', memory: recalled ? memoryEntry(recalled, 'subagent') : undefined };

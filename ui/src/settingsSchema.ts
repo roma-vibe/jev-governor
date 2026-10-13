@@ -943,39 +943,6 @@ export function getSections(): Section[] {
       ],
     },
     {
-      id: 'savings',
-      title: t('Savings calculation'),
-      intro:
-        t('How the “Savings” tab is calculated: dollar amounts at Anthropic list prices (API equivalent), subscription limits are used up in proportion to the same tokens. These settings affect only the calculation, not how the mod works.'),
-      fields: [
-        {
-          path: 'savings.effortFactor',
-          label: t('Share of output per effort level'),
-          kind: 'number',
-          step: 0.05,
-          min: 0,
-          max: 0.6,
-          help: t('The share of a turn’s output saved by lowering effort by one level; about 0.3 according to the project’s A/B tests. Cache reads are not counted. Affects only the estimate.'),
-        },
-        {
-          path: 'savings.defaultBaseModel',
-          label: t('Model without the mod'),
-          kind: 'select',
-          options: [
-            { value: 'claude-opus-5-5', label: 'Opus 5.5' },
-            { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
-          ],
-          help: t('What the sessions would have run on without the mod. Needed for old journal entries where this is not recorded.'),
-        },
-        {
-          path: 'savings.defaultBaseEffort',
-          label: t('Effort without the mod'),
-          kind: 'effort',
-          help: t('The effort level the sessions would have run at without the mod; also only for old journal entries where this is not recorded.'),
-        },
-      ],
-    },
-    {
       id: 'jev',
       title: t('Jev and key'),
       fields: [
@@ -1144,9 +1111,9 @@ export function getGroups(): SettingsGroup[] {
     },
     {
       id: 'projects',
-      title: t('Projects & savings'),
-      description: t('The project panel with its commands, and how the savings are counted.'),
-      sectionIds: ['projects', 'savings'],
+      title: t('Projects'),
+      description: t('The project panel with its commands.'),
+      sectionIds: ['projects'],
     },
   ];
 }

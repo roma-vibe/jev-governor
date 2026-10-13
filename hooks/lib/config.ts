@@ -160,7 +160,6 @@ export const DEFAULT_CONFIG: GovernorConfig = {
     minChars: 800,
   },
   ui: { port: 4777, language: 'auto', showStatus: true, nodePath: 'node', terminal: 'Terminal' },
-  savings: { effortFactor: 0.3, defaultBaseModel: 'claude-opus-5-5', defaultBaseEffort: 'xhigh' },
   codex: { enabled: false },
 };
 
@@ -213,7 +212,6 @@ export function resolveConfig(raw: unknown): GovernorConfig {
   const ui = isObject(c.ui) ? c.ui : {};
   const pr = isObject(c.projects) ? c.projects : {};
   const me = isObject(c.memory) ? c.memory : {};
-  const sv = isObject(c.savings) ? c.savings : {};
   const tl = isObject(c.tools) ? c.tools : {};
   const codex = isObject(c.codex) ? c.codex : {};
   const minEffort = effort(r.minEffort, d.router.minEffort);
@@ -384,11 +382,6 @@ export function resolveConfig(raw: unknown): GovernorConfig {
       language: ui.language === 'ru' || ui.language === 'en' ? ui.language : 'auto',
       showStatus: bool(ui.showStatus, d.ui.showStatus),
       nodePath: str(ui.nodePath, d.ui.nodePath),
-    },
-    savings: {
-      effortFactor: num(sv.effortFactor, d.savings.effortFactor, 0, 0.6),
-      defaultBaseModel: str(sv.defaultBaseModel, d.savings.defaultBaseModel),
-      defaultBaseEffort: effort(sv.defaultBaseEffort, d.savings.defaultBaseEffort),
     },
     codex: { enabled: bool(codex.enabled, d.codex.enabled) },
   };
