@@ -19,3 +19,14 @@ Run each arm on 3 tasks of different kinds (a feature of 5–10 files, a refacto
 ## Decide
 Keep `on` if B costs ≥15% less and passes the same hidden tests. If B fails tests only where a role chose
 Sonnet/Haiku, raise `roleBriefOk` / lower `rolePStrongMax`, or keep `roles` in `shadow` and only `brief on`.
+
+## Results (2026-10-13, one run per arm)
+
+Cost is API-equivalent, recomputed from transcripts (main chat + subagents). Hidden tests passed in every run, so quality did not differ on these tasks. W3 (five injected bugs) was prepared and verified but not run.
+
+| Task | A control | B brief + scope | C brief + scope + roles |
+|---|---|---|---|
+| W1, three Rust modules (63 hidden tests) | $4.32, 3 Opus workers, median 9 steps / 83k context | $3.42 (−21%), median 5 steps / 47k | $3.10 (−28%), 2 Sonnet + 1 Opus, median 6 steps / 64k |
+| W2, three TS libraries (229 hidden tests) | $1.93, 2 Sonnet + 1 Opus workers | $2.27 (+17%), 3 Sonnet | $2.09 (+8%), 3 Sonnet, roles verdict `standard` ×3 |
+
+Reading: no worker passed 150 steps in any arm, so the case the change targets (long workers) was not exercised. In W2 the control already picked Sonnet, and the briefs cost the parent 5 extra steps. One run per arm cannot separate these differences from noise; repeat before drawing a conclusion.

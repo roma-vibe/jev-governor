@@ -2,6 +2,18 @@
 
 [English](README.md) · [Русский](README.ru.md)
 
+![version](https://img.shields.io/badge/version-0.3.14-blue)
+![Claude Code](https://img.shields.io/badge/Claude_Code-%E2%89%A5%202.1.287-D97757)
+![license](https://img.shields.io/badge/license-MIT-green)
+![ToS](https://img.shields.io/badge/ToS-white%20zone%20only-brightgreen)
+![no proxy](https://img.shields.io/badge/proxy-none-brightgreen)
+![no OAuth](https://img.shields.io/badge/OAuth%20tokens-never%20touched-brightgreen)
+![platform](https://img.shields.io/badge/platform-macOS-lightgrey)
+![node](https://img.shields.io/badge/node-26-339933)
+![savings](https://img.shields.io/badge/measured%20saving-17%25%20net%20(real%20use)-orange)
+
+> **White-zone methods only.** This mod uses nothing but the official Claude Code mod mechanism (function hooks inside the unmodified client). No proxy, no `ANTHROPIC_BASE_URL` override, no OAuth token handling, no `claude -p` over a subscription, and nothing that works around a limit or a terms-of-service rule. Every test in this repository, A/B runs included, follows the same rule.
+
 A mod for Claude Code that cuts what a long session costs without lowering the quality of the work. It uses **Jev**, a fast judge model on OpenRouter ($0.042 per million input tokens, ~300 ms), to decide per step how much model each step needs, and to prune old context verbatim instead of summarising it.
 
 Mods shipped in Claude Code 2.1.287. This one uses only that official mechanism: function hooks inside the unmodified client. No proxy, no `ANTHROPIC_BASE_URL`, no OAuth token handling (the mods API has no access to it). Jev is called with your own OpenRouter key.
@@ -27,7 +39,24 @@ Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DATA.md](docs/DATA.
 
 ## How much it saves, honestly
 
-The UI shows two numbers: **exact** (computed from the journal: tokens a compaction or trim removed × the requests that would have re-read them from the cache, minus the cache rewrite it caused, plus model price differences) and **estimated** (the effort lever, a rule of thumb). In our own use over one day of mixed work it came to roughly 7–13% of the API-equivalent spend; on long single-task sessions with big contexts it was far higher in A/B runs (~60%). It does not know what you would have spent without it, so treat the numbers as a lower bound, and run your own A/B on one task with and without the mod before you trust them.
+All figures are API-equivalent dollars (list prices, cache reads and writes priced separately) recomputed from Claude Code's own transcripts, not from the mod's journal. They say nothing about your Max/Pro limits, which are not measured.
+
+| Where measured | Without the mod | With the mod | Change | What produced it |
+|---|---|---|---|---|
+| **Real use, 2026-09-23…10-13** (main chat, cost per step; before/after periods, not a controlled test) | $0.14–0.20 | $0.06–0.075 | **about −50%** | Median context 430k → ~150k. Almost all from the lowered auto-compact window (250k) plus Jev's pruning |
+| **Real use, mod's own ledger** (net of Jev and its model calls) | — | $3,599 spent | **$604 saved, 17% of spend** | $601 compaction; trimming $2.6, deferred tools $0.7, folded dialog ≈ 0 |
+| **A/B, six small tasks T1–T6** (fastDev, 2026-10-05, one run per arm) | $5.01 | $2.35 | **−53%**, 6 of 6 solved in both arms | Mostly routing easy tasks to Sonnet 5.5 (T1–T3, T5). T4 −5%, T6 +18% |
+| **A/B, W1 three-module job via subagents** (2026-10-13) | $4.32 | $3.42 brief / $3.10 brief + roles | **−21% / −28%**, hidden tests pass in all | Shorter workers (median 5 steps, 47k context vs 9 steps, 83k); with roles two of three on Sonnet |
+| **A/B, W2 three-library job via subagents** (2026-10-13) | $1.93 | $2.27 brief / $2.09 brief + roles | **+17% / +8%**, hidden tests pass in all | None: the control run already chose Sonnet for two of three workers, and the brief cost the parent extra steps |
+
+How to read it:
+
+- **One mechanism does nearly all of the saving: smaller contexts.** Cache reads are about 61% of the bill, so keeping the context near 150k instead of 430k is what counts. Per-step trimming of tool output, deferring unused tools, folding old dialog and the memory notes together add up to well under 1%.
+- **Choosing a cheaper model is a given, not a saving.** You could pick Sonnet yourself, so the UI no longer counts it. The T1–T6 and W1 rows include it, which is why they look larger than the ledger.
+- **The subagent changes of 0.3.13 (brief template, size note, roles) are unproven.** One run per arm, two tasks, opposite signs. No worker went past 150 steps, which is the case they target (29% of 226 real workers, 84% of subagent spend). Do not expect a gain from them yet.
+- **Not measured:** the effect of the lowered window alone (a plain `CLAUDE_CODE_AUTO_COMPACT_WINDOW` against Jev's pruning), quality over weeks (14–17% of turns are user corrections with or without it), and real limit use.
+
+Run an A/B on one of your own tasks, with and without the mod, before trusting any of these numbers. The plan and scripts are in [docs/AB-WORKERS.md](docs/AB-WORKERS.md).
 
 ## Install
 
