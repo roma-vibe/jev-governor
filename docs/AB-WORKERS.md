@@ -22,7 +22,7 @@ Sonnet/Haiku, raise `roleBriefOk` / lower `rolePStrongMax`, or keep `roles` in `
 
 ## Results (2026-10-13, one run per arm)
 
-Cost is API-equivalent, recomputed from transcripts (main chat + subagents). Hidden tests passed in every run, so quality did not differ on these tasks. W3 (five injected bugs) was prepared and verified but not run.
+Cost is API-equivalent, recomputed from transcripts (main chat + subagents). Hidden tests passed in every run, so quality did not differ on these tasks. 
 
 | Task | A control | B brief + scope | C brief + scope + roles |
 |---|---|---|---|
@@ -30,3 +30,5 @@ Cost is API-equivalent, recomputed from transcripts (main chat + subagents). Hid
 | W2, three TS libraries (229 hidden tests) | $1.93, 2 Sonnet + 1 Opus workers | $2.27 (+17%), 3 Sonnet | $2.09 (+8%), 3 Sonnet, roles verdict `standard` ×3 |
 
 Reading: no worker passed 150 steps in any arm, so the case the change targets (long workers) was not exercised. In W2 the control already picked Sonnet, and the briefs cost the parent 5 extra steps. One run per arm cannot separate these differences from noise; repeat before drawing a conclusion.
+
+**W3, five injected bugs (2026-10-15, 18 hidden tests):** A $2.26 (5 Sonnet workers), B $1.86 (−18%; three workers, one of them Haiku fixed bugs 1, 2 and 5 and passed), C $2.10 (−7%; 5 Sonnet workers, roles `standard` ×5). All hidden tests passed. W1+W2+W3 together: A $8.51, B $7.55 (−11%), C $7.29 (−14%). Still one run per arm, no worker over 150 steps.

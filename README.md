@@ -48,12 +48,13 @@ All figures are API-equivalent dollars (list prices, cache reads and writes pric
 | **A/B, six small tasks T1–T6** (fastDev, 2026-10-05, one run per arm) | $5.01 | $2.35 | **−53%**, 6 of 6 solved in both arms | Mostly routing easy tasks to Sonnet 5.5 (T1–T3, T5). T4 −5%, T6 +18% |
 | **A/B, W1 three-module job via subagents** (2026-10-13) | $4.32 | $3.42 brief / $3.10 brief + roles | **−21% / −28%**, hidden tests pass in all | Shorter workers (median 5 steps, 47k context vs 9 steps, 83k); with roles two of three on Sonnet |
 | **A/B, W2 three-library job via subagents** (2026-10-13) | $1.93 | $2.27 brief / $2.09 brief + roles | **+17% / +8%**, hidden tests pass in all | None: the control run already chose Sonnet for two of three workers, and the brief cost the parent extra steps |
+| **A/B, W3 five injected bugs via subagents** (2026-10-15) | $2.26 | $1.86 brief / $2.10 brief + roles | **−18% / −7%**, hidden tests pass in all | Control and roles used 5 Sonnet workers; the brief run merged three bugs into one Haiku worker. Sum of W1–W3: $8.51 → $7.55 / $7.29 (**−11% / −14%**) |
 
 How to read it:
 
 - **One mechanism does nearly all of the saving: smaller contexts.** Cache reads are about 61% of the bill, so keeping the context near 150k instead of 430k is what counts. Per-step trimming of tool output, deferring unused tools, folding old dialog and the memory notes together add up to well under 1%.
 - **Choosing a cheaper model is a given, not a saving.** You could pick Sonnet yourself, so the UI no longer counts it. The T1–T6 and W1 rows include it, which is why they look larger than the ledger.
-- **The subagent changes of 0.3.13 (brief template, size note, roles) are unproven.** One run per arm, two tasks, opposite signs. No worker went past 150 steps, which is the case they target (29% of 226 real workers, 84% of subagent spend). Do not expect a gain from them yet.
+- **The subagent changes of 0.3.13 (brief template, size note, roles) are only weakly supported.** One run per arm, three tasks: −11% to −14% in total, but W2 went the other way and the three results are within noise. No worker went past 150 steps, which is the case they target (29% of 226 real workers, 84% of subagent spend). Do not expect a gain from them yet.
 - **Not measured:** the effect of the lowered window alone (a plain `CLAUDE_CODE_AUTO_COMPACT_WINDOW` against Jev's pruning), quality over weeks (14–17% of turns are user corrections with or without it), and real limit use.
 
 Run an A/B on one of your own tasks, with and without the mod, before trusting any of these numbers. The plan and scripts are in [docs/AB-WORKERS.md](docs/AB-WORKERS.md).
