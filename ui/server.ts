@@ -341,11 +341,11 @@ function clampInt(value: string | null, fallback: number, min: number, max: numb
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
 }
 
-type ModelClass = 'sonnet' | 'opus' | 'other';
+type ModelClass = 'sonnet' | 'opus' | 'haiku' | 'other';
 
 const modelClass = (model: unknown): ModelClass => {
   const m = typeof model === 'string' ? model.toLowerCase() : '';
-  return m.includes('opus') ? 'opus' : m.includes('sonnet') ? 'sonnet' : 'other';
+  return m.includes('opus') ? 'opus' : m.includes('sonnet') ? 'sonnet' : m.includes('haiku') ? 'haiku' : 'other';
 };
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
@@ -403,7 +403,7 @@ type LedgerStats = {
 };
 
 function computeStats(entries: readonly LedgerEntry[], days: number): LedgerStats {
-  const byModel = () => ({ sonnet: 0, opus: 0, other: 0 });
+  const byModel = () => ({ sonnet: 0, opus: 0, haiku: 0, other: 0 });
   const tokens = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
   const stats: LedgerStats = {
     days,
@@ -414,8 +414,8 @@ function computeStats(entries: readonly LedgerEntry[], days: number): LedgerStat
     subagents: { count: 0, shadow: 0, byModel: byModel(), byAgent: [], created: 0 },
     rate: { fiveHour: null, sevenDay: null, ts: null },
     usage: {
-      main: { sonnet: tokens(), opus: tokens(), other: tokens() },
-      subagent: { sonnet: tokens(), opus: tokens(), other: tokens() },
+      main: { sonnet: tokens(), opus: tokens(), haiku: tokens(), other: tokens() },
+      subagent: { sonnet: tokens(), opus: tokens(), haiku: tokens(), other: tokens() },
     },
     jev: { requests: 0, cost: 0, avgMs: 0 },
     // `ok`/`fallback`/`avgRatio` as before; `byReason` counts every compaction

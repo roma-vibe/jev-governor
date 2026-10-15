@@ -72,9 +72,9 @@ export function modelName(model: string | undefined): string {
   return `${family} ${m[2]}.${m[3]}`;
 }
 
-export function modelTone(model: string | undefined): 'opus' | 'sonnet' | 'other' {
+export function modelTone(model: string | undefined): 'opus' | 'sonnet' | 'haiku' | 'other' {
   const m = (model ?? '').toLowerCase();
-  return m.includes('opus') ? 'opus' : m.includes('sonnet') ? 'sonnet' : 'other';
+  return m.includes('opus') ? 'opus' : m.includes('sonnet') ? 'sonnet' : m.includes('haiku') ? 'haiku' : 'other';
 }
 
 export function projectName(project: string | undefined): string {

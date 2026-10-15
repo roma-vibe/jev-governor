@@ -107,8 +107,8 @@ const tiles = computed(() => {
       sub: t('total in history: {n}', { n: project.value?.sessions ?? 0 }),
     },
     {
-      label: t('Sonnet / Opus turns'),
-      value: dash(`${s.turns.sonnet} / ${s.turns.opus}`),
+      label: t('Sonnet / Opus / Haiku turns'),
+      value: dash(`${s.turns.sonnet} / ${s.turns.opus} / ${s.turns.haiku}`),
       sub: s.turns.shadow > 0 ? t('in shadow mode: {n}', { n: s.turns.shadow }) : seen ? t('applied decisions') : '',
     },
     {

@@ -101,7 +101,7 @@ export default {
   '{n} {n#changed file|changed files}': '{n} {n#изменённый файл|изменённых файла|изменённых файлов}',
   'Sessions in {days} d': 'Сессии за {days} дн',
   'total in history: {n}': 'всего в истории: {n}',
-  'Sonnet / Opus turns': 'Ходы Sonnet / Opus',
+  'Sonnet / Opus / Haiku turns': 'Ходы Sonnet / Opus / Haiku',
   'in shadow mode: {n}': 'в наблюдении: {n}',
   'applied decisions': 'применённые решения',
   Subagents: 'Субагенты',

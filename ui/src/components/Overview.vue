@@ -61,6 +61,7 @@ watch(days, () => void load());
 const modelRows = [
   { key: 'sonnet', dot: 'bg-sky-500' },
   { key: 'opus', dot: 'bg-violet-500' },
+  { key: 'haiku', dot: 'bg-emerald-500' },
   { key: 'other', dot: 'bg-zinc-400' },
 ] as const;
 
@@ -70,6 +71,8 @@ function modelLabel(key: (typeof modelRows)[number]['key']): string {
       return 'Sonnet';
     case 'opus':
       return 'Opus';
+    case 'haiku':
+      return 'Haiku';
     default:
       return t('Other');
   }
