@@ -15,6 +15,13 @@ export function claudeTarget(tier: Tier, effort: Effort, config: GovernorConfig)
   return { provider: 'claude', model: config.models[tier], effort };
 }
 
+/** A model id as people name it: `claude-fable-5-2` → "Fable 5.2"; an id of another shape stays as it is. */
+export function modelLabel(model: string): string {
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:$|[-[])/i.exec(model.trim());
+  if (!m) return model;
+  return `${m[1]!.charAt(0).toUpperCase()}${m[1]!.slice(1).toLowerCase()} ${m[2]}${m[3] ? `.${m[3]}` : ''}`;
+}
+
 export function displayModel(model: string): string {
   const m = model.toLowerCase();
   if (m.includes('opus')) return 'opus';

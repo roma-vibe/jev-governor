@@ -102,6 +102,7 @@ export default {
   'Sessions in {days} d': 'Сессии за {days} дн',
   'total in history: {n}': 'всего в истории: {n}',
   'Sonnet / Opus / Haiku turns': 'Ходы Sonnet / Opus / Haiku',
+  'Fable / Sonnet / Opus / Haiku turns': 'Ходы Fable / Sonnet / Opus / Haiku',
   'in shadow mode: {n}': 'в наблюдении: {n}',
   'applied decisions': 'применённые решения',
   Subagents: 'Субагенты',

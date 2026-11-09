@@ -104,6 +104,13 @@ export function getSections(): Section[] {
           mono: true,
           help: t('Model for read-only subagents with an easy task, when “Light model for reading subagents” is on. Haiku 5.5 takes the effort chosen for the task.'),
         },
+        {
+          path: 'fable.model',
+          label: t('Fable mode model'),
+          kind: 'text',
+          mono: true,
+          help: t('The one model everything runs on while Fable mode is on (the switch at the top of Settings). The tiers above are not used then; the effort bounds below still apply.'),
+        },
       ],
     },
     {

@@ -74,6 +74,39 @@ agent.spawn (not a fork)
   └─ model = Sonnet/Opus by P(opus) vs bar (search agents +0.2), effort per step
 ```
 
+A model named in the Agent call is kept (`router.respectExplicitModel`, on): only effort,
+the specialist, the brief and the notes are routed. When the person asks to set agents up
+("давай настроим агентов", "set up the agents") every spawn is held once with a refusal that
+tells the parent to ask the person (AskUserQuestion) which agent, for what, on which model,
+the recommended one first; the retry carries `model` and goes through. Ends with "хватит
+спрашивать про агентов" / "stop asking about agents" or `/jevg agents setup off`; `/jevg agents
+setup` starts it by command; `agents.setup: false` turns the whole thing off.
+
+### Fable mode (`fable.enabled`)
+
+One model for everything, Jev picks only the effort. With the switch at the top of the settings
+page on, every step of the main chat and of every subagent runs on `fable.model`
+(`claude-fable-5-2`), set in `turn.step` and at `agent.spawn`:
+
+- Jev is asked `effort`, `risky` (and, for the main chat, `continuation`, `new_topic`,
+  `correction`), not `tier_a`/`tier_b`. The effort is chosen as before: Jev's score, the risk
+  floor, the budget cap, escalation after tool errors, `router.minEffort`…`maxEffort`.
+- Nothing moves the model: no Sonnet/Opus switch, no light model, no roles, no agent setup hold
+  (one model, nothing to choose). A model named in the Agent call, a specialist's pinned tier and
+  a `/model` change in the chat give way; a specialist's pinned effort is kept.
+- The model is set also where nothing was decided: no Jev key, Jev down, the handoff brief turn,
+  a fork or another subagent the mod did not route. With `router.mainEffort` or
+  `router.subagents` off the effort there is left alone, the model still set.
+- Shadow mode records the decision (`model` = the Fable id, `applied: false`) and changes
+  nothing; `/jevg chat off` and `enabled: false` leave the chat alone as always.
+- The mod's own small calls (specialist drafts, autosave of facts, command descriptions) keep
+  their models (`agents.draftModel`, `memory.autoSaveModel`…).
+
+One model is one prompt cache, so the cache is rewritten once, on the turn the mode is switched
+on (or off) in a running chat; that turn's ledger entry has `switched` and `rewrite`. Ledger
+entries of the mode carry no `pStrong` and the reason `Fable mode: model fixed, effort only`.
+`pathOverrides` can switch it per folder (`{"set":{"fable":{"enabled":true}}}`).
+
 Verified against the engine (2.1.286): a spawn can only be rewritten to an
 agent type that was offered to the model when the turn began; a hidden or
 freshly registered type is refused, the Agent call fails, and the hook cannot

@@ -107,8 +107,9 @@ const tiles = computed(() => {
       sub: t('total in history: {n}', { n: project.value?.sessions ?? 0 }),
     },
     {
-      label: t('Sonnet / Opus / Haiku turns'),
-      value: dash(`${s.turns.sonnet} / ${s.turns.opus} / ${s.turns.haiku}`),
+      // Fable joins the tile once a turn ran on it (Fable mode).
+      label: s.turns.fable > 0 ? t('Fable / Sonnet / Opus / Haiku turns') : t('Sonnet / Opus / Haiku turns'),
+      value: dash(`${s.turns.fable > 0 ? `${s.turns.fable} / ` : ''}${s.turns.sonnet} / ${s.turns.opus} / ${s.turns.haiku}`),
       sub: s.turns.shadow > 0 ? t('in shadow mode: {n}', { n: s.turns.shadow }) : seen ? t('applied decisions') : '',
     },
     {

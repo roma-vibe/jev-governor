@@ -184,3 +184,36 @@ export function applyRole(decision: Decision, b: BriefSignals, ctx: RoleContext,
     reasons: [`${tag}: ${light ? 'light model' : 'standard tier'}, brief ${b.complete.toFixed(2)}`],
   };
 }
+
+const SETUP_ON = /(настро(им|ить|йте|й)\s+(\S+\s+){0,2}агент|настройк\S*\s+(\S+\s+){0,2}агент|(set\s*up|configure|choose|pick)\s+(the\s+|my\s+)?(sub)?agents?)/i;
+const SETUP_OFF = /((хватит|больше не|не надо|не нужно|закончили|готово|отбой)\W+(\S+\s+){0,4}(спрашива\S*|настройк\S*|выбор\S*)\s+(\S+\s+){0,2}агент|(stop|no more)\s+(asking|the setup|setting up)\S*\s+(\S+\s+){0,2}agents?|agents?\s+setup\s+(is\s+)?(done|off))/i;
+
+/** What the person's own words say about agent setup: true to start it, false to end it, undefined for neither. */
+export function agentSetupIntent(text: string): boolean | undefined {
+  if (SETUP_OFF.test(text)) return false;
+  if (SETUP_ON.test(text)) return true;
+  return undefined;
+}
+
+export type SetupAsk = {
+  description: string;
+  subagentType: string;
+  agent?: string;
+  recommended: string;
+  recommendedWhy: string[];
+  models: GovernorConfig['models'];
+};
+
+/** The hold text for agent setup: ask the person per agent (what for, which model, the recommended one), then spawn with `model`. */
+export function setupDenyText(a: SetupAsk): string {
+  const choices = [...new Set([a.models.strong, a.models.standard, a.models.light])];
+  const why = a.recommendedWhy.length ? ` (${a.recommendedWhy.slice(0, 2).join('; ')})` : '';
+  return [
+    `The user asked to set agents up before they start, so this spawn is held for their choice.`,
+    `Agent: ${a.agent ?? a.subagentType}. Purpose: ${a.description}.`,
+    `Recommended model: ${a.recommended}${why}. Options: ${choices.join(', ')}.`,
+    `Ask the user now with AskUserQuestion, one question per agent you are about to spawn (put the questions of parallel spawns into one call): name the agent, say what it is created for, list the models with the recommended one first and marked "(Recommended)".`,
+    `Then spawn again with the \`model\` parameter set to the answer: that model is kept as given. The same task goes through when spawned again.`,
+    `(The user can end this with "stop asking about agents" or /jevg agents setup off.)`,
+  ].join('\n');
+}

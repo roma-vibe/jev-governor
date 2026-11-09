@@ -23,6 +23,16 @@ export default {
   'One path per line. In these projects the mod sends nothing to Jev (OpenRouter): no model and effort choice, no compaction or trimming through Jev, no turn selection for the capsule. For third-party or work code. In other projects secrets (keys, tokens, passwords) are replaced with [secret] before sending anyway, but code and paths go out as they are.':
     'По одному пути на строку. В этих проектах мод ничего не отправляет в Jev (OpenRouter): нет выбора модели и effort, нет сжатия и обрезки через Jev, нет отбора ходов для капсулы. Для чужого или рабочего кода. В остальных проектах секреты (ключи, токены, пароли) и так заменяются на [secret] перед отправкой, но код и пути уходят как есть.',
   'Codex is coming in the next version.': 'Codex — в следующей версии.',
+  '{model} mode': 'Режим {model}',
+  on: 'включён',
+  'Everything runs on {model}: the main chat and every subagent. Jev no longer chooses between models and picks only the effort for each task and agent. Sonnet/Opus switching, the light model and roles rest while the mode is on; compaction, trimming and memory work as before.':
+    'Всё идёт на {model}: основной диалог и каждый субагент. Jev больше не выбирает между моделями, а подбирает только усилие (effort) для каждой задачи и агента. Переключение Sonnet/Opus, лёгкая модель и роли отдыхают, пока режим включён; сжатие, обрезка и память работают как раньше.',
+  'effort bounds and the model id': 'границы усилия и идентификатор модели',
+  '{model} mode is on. The mod will pick it up on the next turn.': 'Режим {model} включён. Мод подхватит его со следующего хода.',
+  '{model} mode is off. The mod chooses between the models again.': 'Режим {model} выключен. Мод снова выбирает между моделями.',
+  'Fable mode model': 'Модель режима Fable',
+  'The one model everything runs on while Fable mode is on (the switch at the top of Settings). The tiers above are not used then; the effort bounds below still apply.':
+    'Единственная модель, на которой всё идёт, пока включён режим Fable (переключатель вверху настроек). Уровни выше тогда не используются; границы усилия ниже действуют по-прежнему.',
   'Models': 'Модели',
   'The mod chooses between two tiers. Change the identifiers only when new versions are released.':
     'Мод выбирает между двумя уровнями. Идентификаторы меняйте, только когда выходят новые версии.',

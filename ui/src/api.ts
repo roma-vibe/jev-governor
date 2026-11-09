@@ -31,7 +31,7 @@ export type JevTest = { ok: true; ms: number; noul: number; cost: number | null 
 export type CompactReason = 'engine' | 'threshold' | 'return' | 'window';
 export type TrimOutcome = 'passed' | 'failed' | 'build-error' | 'error' | 'unknown';
 export type Tokens = { input: number; output: number; cacheRead: number; cacheWrite: number };
-export type ByModel<T> = { sonnet: T; opus: T; haiku: T; other: T };
+export type ByModel<T> = { fable: T; sonnet: T; opus: T; haiku: T; other: T };
 export type Stats = {
   days: number;
   entries: number;
@@ -134,7 +134,7 @@ export type ProjectStats = {
   days: number;
   entries: number;
   sessions: number;
-  turns: { count: number; shadow: number; sonnet: number; opus: number; haiku: number; other: number };
+  turns: { count: number; shadow: number; fable: number; sonnet: number; opus: number; haiku: number; other: number };
   subagents: { count: number; shadow: number };
   jevCost: number;
   learnedCommands: number;

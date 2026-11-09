@@ -103,7 +103,7 @@ export type LearnedCommand = {
 
 /** The part of the server's ledger statistics a project page shows. */
 export type LedgerStats = {
-  turns: { count: number; shadow: number; byModel: { sonnet: number; opus: number; haiku: number; other: number } };
+  turns: { count: number; shadow: number; byModel: { fable: number; sonnet: number; opus: number; haiku: number; other: number } };
   subagents: { count: number; shadow: number };
   jev: { cost: number };
 };
@@ -813,7 +813,7 @@ export function createProjects(deps: ProjectsDeps) {
       days: LEDGER_DAYS,
       entries: mine.length,
       sessions: new Set(mine.map((e) => e.session)).size,
-      turns: { count: s.turns.count, shadow: s.turns.shadow, sonnet: s.turns.byModel.sonnet, opus: s.turns.byModel.opus, haiku: s.turns.byModel.haiku, other: s.turns.byModel.other },
+      turns: { count: s.turns.count, shadow: s.turns.shadow, fable: s.turns.byModel.fable, sonnet: s.turns.byModel.sonnet, opus: s.turns.byModel.opus, haiku: s.turns.byModel.haiku, other: s.turns.byModel.other },
       subagents: { count: s.subagents.count, shadow: s.subagents.shadow },
       jevCost: s.jev.cost,
       learnedCommands: learned,

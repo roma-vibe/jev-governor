@@ -46,6 +46,12 @@ export type GovernorConfig = {
     /** The light model read-only subagents may run on (`router.lightSubagents`). */
     light: string;
   };
+  /**
+   * Fable mode: every turn and every subagent runs on this one model and Jev picks only the
+   * effort. The tier is not asked; nothing switches the model (no tiers, no light model, no
+   * roles), and a model named in an Agent call or pinned by a specialist gives way to it.
+   */
+  fable: { enabled: boolean; model: string };
   router: {
     /** Choose the main conversation's model (only where the prompt cache allows). */
     mainModel: boolean;
@@ -53,6 +59,8 @@ export type GovernorConfig = {
     mainEffort: boolean;
     /** Choose model and effort for every subagent at spawn. */
     subagents: boolean;
+    /** A model named in the Agent call (by the person or the parent) is kept; only effort and the rest are routed. */
+    respectExplicitModel: boolean;
     /** P(strong) to move standard → strong where a switch is free or cheap. */
     upgradeAt: number;
     /** P(strong) to move standard → strong even with a warm cache. */
@@ -147,6 +155,12 @@ export type GovernorConfig = {
     scopeNote: boolean;
     /** The file size (lines) the scope note asks for. */
     fileLines: number;
+    /**
+     * Agent setup on request: when the person asks to set agents up ("давай настроим агентов"),
+     * every spawn is held once and the parent asks the person which agent, for what, and on which
+     * model (with the recommended one). Off by default for every other chat; `/jevg agents setup off` ends it.
+     */
+    setup: boolean;
     /** Add the brief template to the Agent tool's description, so the parent writes complete briefs. */
     delegationGuide: boolean;
     /**

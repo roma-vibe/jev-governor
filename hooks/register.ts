@@ -36,10 +36,10 @@ import { applyFolds, DEFAULT_FOLD_OPTIONS, foldArchiveText, foldFileName, foldKe
 import { resolveLang, systemLocales } from './lib/lang.ts';
 import { expandHome, isExcluded, resolveConfig, withPathOverrides } from './lib/config.ts';
 import { clip, estimateContextTokens, recentHistory, type HistoryMessage } from './lib/history.ts';
-import { applyRole, briefQuestions, briefVerdict, DELEGATION_GUIDE, denyText, readBrief, withScopeNote, type BriefSignals, type BriefVerdict } from './lib/brief.ts';
+import { applyRole, briefQuestions, briefVerdict, DELEGATION_GUIDE, agentSetupIntent, denyText, readBrief, setupDenyText, withScopeNote, type BriefSignals, type BriefVerdict } from './lib/brief.ts';
 import { choice, jevAsker, noul, withTimeout, type JevAsker, type JevQuestions, type JevResponse } from './lib/jev.ts';
 import { isMemoryTool, looksDown, memoryBlock, parseRecall, recallTask, resultText as memoryText, sessionSummary, stillConnecting, type RecallResult } from './lib/memory.ts';
-import { displayModel } from './lib/providers.ts';
+import { displayModel, modelLabel } from './lib/providers.ts';
 import { redact } from './lib/redact.ts';
 import { extractPrompt, extractSystem, parseCandidates, realTurn, turnKey, type Candidate, type KnownFact } from './lib/autosave.ts';
 import { chunkQuestions, isClaudeSavedOutput, isLogCandidate, isRunnerCommand, LOG_KEY_LINES, logQuestion, persistedOutputPath, MIN_TRIM_GAIN, planTrim, renderTrim, trimKind, worthTrimming, type Chunk } from './lib/trim.ts';
@@ -70,6 +70,7 @@ import {
   decideSubagent,
   escalate,
   fallbackDecision,
+  fixedModel,
   looksLikeReading,
   isShortFollowUp,
   MAIN_STATE_CONTEXT,
@@ -242,7 +243,7 @@ async function applyAutoWindow($: EngineInterface, log: boolean): Promise<void> 
 /** The model a subagent runs on, as routed (the main chat's when the mod did not route it). */
 function subModel(agentId: string): string | undefined {
   const sub = S.subs.get(agentId);
-  return sub ? S.cfg.models[sub.tier] : S.route.lastModel;
+  return sub ? (sub.model ?? S.cfg.models[sub.tier]) : S.route.lastModel;
 }
 
 async function saveConfig($: EngineInterface): Promise<void> {
@@ -540,11 +541,14 @@ async function pressureNow(
 
 async function decideMainTurn($: EngineInterface, text: string): Promise<MainOutcome | undefined> {
   const cfg = S.cfg;
-  if (!cfg.router.mainModel && !cfg.router.mainEffort) return undefined;
+  // Fable mode: the model is fixed (turn.step sets it), so only the effort is left to decide.
+  const fable = fixedModel(cfg);
+  if (!cfg.router.mainEffort && (fable !== undefined || !cfg.router.mainModel)) return undefined;
   const budget = await pressureNow($);
   const sessionModel = await $.session.model();
-  // A /model change by the person: adopt it, do not fight it this turn.
-  const manual = S.route.lastSessionModel !== undefined && S.route.lastSessionModel !== sessionModel;
+  // A /model change by the person: adopt it, do not fight it this turn. Not in Fable mode, which
+  // keeps its one model whatever the session's own is.
+  const manual = fable === undefined && S.route.lastSessionModel !== undefined && S.route.lastSessionModel !== sessionModel;
   if (manual) {
     await ledger($, {
       kind: 'override',
@@ -594,10 +598,10 @@ async function decideMainTurn($: EngineInterface, text: string): Promise<MainOut
     project: S.project,
     latest_user_request: clip(text, 3000, 600),
     recent_conversation: recentHistory(messages, { maxTokens: 3500, maxMessages: 14, latest: text }),
-    current_model: current === 'strong' ? 'Opus 5.5' : 'Sonnet 5.5',
+    current_model: fable !== undefined ? modelLabel(fable) : current === 'strong' ? 'Opus 5.5' : 'Sonnet 5.5',
   };
-  const asked = await askJev($, state, mainQuestions());
-  const signals = asked ? readSignals(asked.response.answers) : undefined;
+  const asked = await askJev($, state, mainQuestions(fable !== undefined));
+  const signals = asked ? readSignals(asked.response.answers, fable !== undefined) : undefined;
   // Jev down: the session's own model would be a switch nobody weighed.
   if (!signals) {
     if (S.route.previous || !cfg.router.mainEffort) return keep('Jev unavailable');
@@ -737,9 +741,11 @@ async function planSpawn(
   const remap = cfg.agents.enabled && !e.workflow && cfg.agents.remapFrom.includes(e.subagentType);
   const candidates = remap ? rankCandidates([...S.agents.values()], e.prompt, MAX_CANDIDATES, e.description) : [];
   // A workflow's agent keeps its script's prompt, so its brief is nobody's to improve.
-  const judgeBrief = !e.workflow && (cfg.agents.brief !== 'off' || cfg.router.roles !== 'off');
+  // Fable mode: one model for every subagent, so no tier is asked and roles (which move tiers) rest.
+  const fixed = fixedModel(cfg);
+  const judgeBrief = !e.workflow && (cfg.agents.brief !== 'off' || (cfg.router.roles !== 'off' && fixed === undefined));
   const questions: JevQuestions = {
-    ...(cfg.router.subagents ? subagentQuestions() : {}),
+    ...(cfg.router.subagents ? subagentQuestions(fixed !== undefined) : {}),
     ...(candidates.length > 0 ? { agent: agentQuestion(candidates) } : {}),
     ...(judgeBrief ? briefQuestions() : {}),
   };
@@ -774,7 +780,7 @@ async function planSpawn(
   }
   if (agent && !created && (remap || ownName)) void noteUse($, agent);
 
-  const signals = asked ? readSignals(asked.response.answers) : undefined;
+  const signals = asked ? readSignals(asked.response.answers, fixed !== undefined) : undefined;
   const pinnedTier = agent && agent.tier !== 'auto' ? agent.tier : undefined;
   const pinnedEffort = agent && agent.effort !== 'auto' ? agent.effort : undefined;
   const readOnly =
@@ -787,7 +793,7 @@ async function planSpawn(
     // Research-like errands without a pinned tier go to the standard model at medium effort.
     const reading = cfg.router.fallbackReadOnlyStandard && pinnedTier === undefined && looksLikeReading(e.description);
     decision = reading
-      ? fallbackDecision('standard', 'Jev unavailable, research-like task on the standard model', cfg, pinnedEffort ?? 'medium')
+      ? fallbackDecision('standard', fixed !== undefined ? 'Jev unavailable, research-like task' : 'Jev unavailable, research-like task on the standard model', cfg, pinnedEffort ?? 'medium')
       : fallbackDecision(pinnedTier ?? tierOf(e.model ?? e.parentModel, cfg) ?? 'strong', 'Jev unavailable', cfg, pinnedEffort);
     keepModel = pinnedTier === undefined && !reading;
   } else if (cfg.router.subagents && signals) {
@@ -806,6 +812,14 @@ async function planSpawn(
     decision = { tier: pinnedTier, effort: pinnedEffort ?? cfg.router.defaultEffort, switched: false, reasons: ['pinned by agent'] };
   }
 
+  // A model named in the Agent call is the person's (or the parent's) choice: kept as it is.
+  // Effort, the specialist, the brief and the notes are still routed.
+  // Not in Fable mode: there the one model wins over a named one too.
+  const explicit = fixed === undefined && cfg.router.respectExplicitModel && e.model !== undefined && !e.workflow;
+  if (explicit && decision) {
+    decision = { ...decision, light: false, reasons: [...decision.reasons, `model kept: named in the request (${e.model})`] };
+  }
+
   // The brief and the role: judged for every spawn when asked; the role changes the decision only
   // with router.roles on, the refusal only with agents.brief on (and never in shadow mode).
   let brief: BriefSignals | undefined;
@@ -814,11 +828,15 @@ async function planSpawn(
   let deny: string | undefined;
   if (asked && judgeBrief) brief = readBrief(asked.response.answers);
   if (brief && decision) {
-    role = applyRole(decision, brief, { pinnedTier: pinnedTier !== undefined, pStrong: signals?.pStrong ?? 1, risky: signals?.risky ?? 0 }, cfg);
-    if (cfg.router.roles === 'on' && !shadow() && role.would !== 'none') decision = { ...role.decision, reasons: [...role.decision.reasons, ...role.reasons] };
+    if (fixed === undefined) {
+      role = applyRole(decision, brief, { pinnedTier: pinnedTier !== undefined, pStrong: signals?.pStrong ?? 1, risky: signals?.risky ?? 0 }, cfg);
+      if (cfg.router.roles === 'on' && !shadow() && role.would !== 'none') decision = { ...role.decision, reasons: [...role.decision.reasons, ...role.reasons] };
+    }
     if (cfg.agents.brief !== 'off' && !readOnly) {
       const parentTier = tierOf(e.model ?? e.parentModel, cfg);
-      const lower = decision.light === true || (decision.tier === 'standard' && parentTier !== 'standard');
+      // A weaker model than the parent's needs a fuller brief; in Fable mode both run on the same one.
+      const lower =
+        fixed !== undefined ? false : explicit ? e.model !== e.parentModel : decision.light === true || (decision.tier === 'standard' && parentTier !== 'standard');
       verdict = briefVerdict(brief, cfg, lower);
       const asKey = `${S.project}|${e.description.trim().toLowerCase()}`;
       if (verdict !== 'ok' && cfg.agents.brief === 'on' && !shadow() && !S.briefAsked.has(asKey)) {
@@ -842,7 +860,8 @@ async function planSpawn(
     ...(role ? { role } : {}),
     ...(scoped ? { scoped } : {}),
     ...(deny ? { deny } : {}),
-    model: decision && !keepModel ? (decision.light && cfg.router.lightSubagents === 'on' ? cfg.models.light : cfg.models[decision.tier]) : undefined,
+    ...(explicit ? { explicit } : {}),
+    model: fixed ?? (decision && !keepModel && !explicit ? (decision.light && cfg.router.lightSubagents === 'on' ? cfg.models.light : cfg.models[decision.tier]) : undefined),
     decision,
     agent,
     created,
@@ -2346,6 +2365,13 @@ async function mergeOnce($: EngineInterface, why: string): Promise<Awaited<Retur
 /** `/jevg agents`: the registry and its most used specialists; `/jevg agents merge`: fold near-copies together now. */
 async function agentsCommand($: EngineInterface, arg: string): Promise<string> {
   await loadConfig($, true);
+  if (arg === 'setup' || arg === 'setup on' || arg === 'setup off') {
+    S.agentSetup = arg !== 'setup off';
+    S.setupAsked.clear();
+    return S.agentSetup
+      ? L('Настройка агентов включена: каждый запуск агента сначала уходит к вам на выбор агента и модели. Выключить: /jevg agents setup off', 'Agent setup on: every agent spawn first goes to you to choose the agent and model. Off: /jevg agents setup off')
+      : L('Настройка агентов выключена.', 'Agent setup off.');
+  }
   if (await loadRegistry($)) await registerAll($);
   if (arg === 'merge') {
     const done = await mergeOnce($, '/jevg agents merge').catch(async (error) => {
@@ -2558,7 +2584,8 @@ async function statusReport($: EngineInterface): Promise<string> {
   const prev = S.route.previous;
   const lines = [
     `jev-governor ${cfg.enabled ? (S.chat.off ? 'OFF in this chat (/jevg chat on)' : `ON (${shadow() ? L('наблюдение', 'shadow') : 'active'})`) : 'OFF'} · key ${S.key ? 'found' : 'MISSING'} · Jev ${cfg.jev.model}${isExcluded(cfg, S.cwd, S.home) ? L(' · проект исключён: к Jev ничего не уходит', ' · project excluded: nothing is sent to Jev') : ''}`,
-    `routing: main model ${cfg.router.mainModel ? 'on' : 'off'}, main effort ${cfg.router.mainEffort ? 'on' : 'off'}, subagents ${cfg.router.subagents ? 'on' : 'off'}; compaction ${cfg.compaction.enabled ? `on (at ${Math.round(cfg.compaction.compactAtTokens / 1000)}k${cfg.compaction.archive ? ', archive' : ''})` : 'off'}; handoff ${cfg.handoff.enabled ? 'on' : 'off'}`,
+    ...(cfg.fable.enabled ? [L(`режим ${modelLabel(cfg.fable.model)}: всё идёт на ${cfg.fable.model}, Jev выбирает только усилие`, `${modelLabel(cfg.fable.model)} mode: everything runs on ${cfg.fable.model}, Jev picks only the effort`)] : []),
+    `routing: main model ${cfg.fable.enabled ? 'fixed' : cfg.router.mainModel ? 'on' : 'off'}, main effort ${cfg.router.mainEffort ? 'on' : 'off'}, subagents ${cfg.router.subagents ? 'on' : 'off'}; compaction ${cfg.compaction.enabled ? `on (at ${Math.round(cfg.compaction.compactAtTokens / 1000)}k${cfg.compaction.archive ? ', archive' : ''})` : 'off'}; handoff ${cfg.handoff.enabled ? 'on' : 'off'}`,
     `last: ${S.route.lastModel ? displayModel(S.route.lastModel) : '—'}${prev ? ` · ${prev.effort}` : ''} · budget ${budget.text || 'n/a'} (pressure ${budget.pressure})`,
     `${registryLine()} (/jevg agents)`,
     `data: ${S.data}`,
@@ -2819,20 +2846,35 @@ export const register: Register = (on) => {
     };
     if (e.agentId === undefined) S.lastMainStepAt = Date.now();
     if (!S.toolDeferLogged) void logDeferredTools($);
+    // Fable mode: every step of this chat and of its subagents (forks too) runs on the one model,
+    // also where nothing was decided for it: no Jev key, Jev down, the handoff brief, a subagent
+    // that was not routed. `fable` is the setting, `fixed` the model where it is carried out.
+    const fable = fixedModel(S.cfg);
+    const fixed = active() && !shadow() ? fable : undefined;
+    const pin = (x: typeof e): typeof e => {
+      if (fixed === undefined) return x;
+      if (x.agentId === undefined) S.route.lastModel = fixed;
+      return x.model === fixed ? x : { ...x, model: fixed };
+    };
     // The handoff brief: same model (its cache is what makes it cheap), no deep reasoning needed.
     if (e.agentId === undefined && S.handoff?.turnId === e.turnId) {
       S.route.lastRequestAt = Date.now();
-      return yield* counted(e.effort === undefined ? e : { ...e, effort: 'medium' });
+      return yield* counted(pin(e.effort === undefined ? e : { ...e, effort: 'medium' }));
     }
     if (!active()) return yield* counted(e);
 
     if (e.agentId !== undefined) {
       if (shadow()) return yield* counted(e);
       const sub = S.subs.get(e.agentId) ?? (await claimPending($, e.agentId));
-      if (!sub || !S.cfg.router.subagents) return yield* counted(e);
+      if (!sub || !S.cfg.router.subagents) return yield* counted(pin(e));
       sub.steps++;
       if (sub.baseEffort === undefined && typeof e.effort === 'string') sub.baseEffort = e.effort;
       const steps = S.cfg.router.escalateAfterErrors > 0 ? Math.floor(sub.errors / S.cfg.router.escalateAfterErrors) : 0;
+      // Also a subagent that started before the mode was switched on.
+      if (fixed !== undefined) {
+        sub.light = false;
+        sub.model = fixed;
+      }
       if (sub.light) {
         // Haiku 5.5 takes the chosen effort (Haiku 4.5 took none). It reasons less: a task that grows
         // past searching or failing tools move it to the standard model (one cache rewrite, once).
@@ -2854,7 +2896,7 @@ export const register: Register = (on) => {
     }
 
     const turn = S.turn;
-    if (!turn || turn.id !== e.turnId) return yield* counted(e);
+    if (!turn || turn.id !== e.turnId) return yield* counted(pin(e));
     turn.steps++;
     if (turn.baseModel === undefined) turn.baseModel = e.model;
     if (turn.baseEffort === undefined && typeof e.effort === 'string') {
@@ -2867,13 +2909,14 @@ export const register: Register = (on) => {
       }
     }
     const outcome = await turn.decision;
-    if (!outcome) return yield* counted(e);
+    if (!outcome) return yield* counted(pin(e));
 
     const { decision } = outcome;
     const applied = !shadow();
-    // Keep the session's exact id when it already is the chosen tier (same cache).
+    // Fable mode: the one model. Otherwise keep the session's exact id when it already is the
+    // chosen tier (same cache).
     const model =
-      S.cfg.router.mainModel && tierOf(e.model, S.cfg) !== decision.tier ? S.cfg.models[decision.tier] : e.model;
+      fable ?? (S.cfg.router.mainModel && tierOf(e.model, S.cfg) !== decision.tier ? S.cfg.models[decision.tier] : e.model);
     const steps = S.cfg.router.escalateAfterErrors > 0 ? Math.floor(turn.errors / S.cfg.router.escalateAfterErrors) : 0;
     const effort =
       S.cfg.router.mainEffort && !decision.keepEffort ? escalate(decision.effort, Math.min(2, steps), S.cfg, outcome.pressure) : undefined;
@@ -2887,7 +2930,8 @@ export const register: Register = (on) => {
 
     if (!turn.logged) {
       turn.logged = true;
-      const switched = prevModel !== undefined && tierOf(prevModel, S.cfg) !== tierOf(model, S.cfg);
+      // Fable is in neither tier: there a switch is any other model before it (the mode was just turned on).
+      const switched = prevModel !== undefined && (fable !== undefined ? prevModel !== model : tierOf(prevModel, S.cfg) !== tierOf(model, S.cfg));
       if (switched) S.route.turnsOnModel = 0;
       else if (S.route.turnsOnModel !== undefined) S.route.turnsOnModel++;
       // A /model switch rewrites the cache too, whoever made it.
@@ -2909,7 +2953,7 @@ export const register: Register = (on) => {
         effort,
         switched,
         ...(rewrite ? { rewrite } : {}),
-        pStrong: outcome.signals?.pStrong,
+        pStrong: outcome.signals?.effortOnly ? undefined : outcome.signals?.pStrong,
         effortScore: outcome.signals?.effortExpected,
         risky: outcome.signals?.risky,
         continuation: outcome.signals?.continuation,
@@ -3042,10 +3086,13 @@ export const register: Register = (on) => {
       const recalled = await recalling;
       return { notes: recalled?.block && !shadow() ? `\n\n${recalled.block.text}` : '', memory: recalled ? memoryEntry(recalled, 'subagent') : undefined };
     };
+    // Fable mode: the one model also where no plan is made (no key, routing off). A fork is left
+    // alone here: it continues its parent's transcript, and its steps are set in turn.step.
+    const fixed = active() && !shadow() && !e.fork ? fixedModel(S.cfg) : undefined;
     // No plan: the notes still go, logged on their own.
     const plain = async (): Promise<Awaited<ReturnType<typeof next>>> => {
       const { notes, memory } = await withNotes();
-      const result = await next(notes ? { ...e, prompt: `${e.prompt}${notes}` } : e);
+      const result = await next(notes || fixed !== undefined ? { ...e, ...(notes ? { prompt: `${e.prompt}${notes}` } : {}), ...(fixed !== undefined ? { model: fixed } : {}) } : e);
       if (memory) await ledger($, { kind: 'memory', scope: 'subagent', agentId: result.agentId, applied: !shadow(), text: clip(e.description, 160), memory });
       return result;
     };
@@ -3072,6 +3119,34 @@ export const register: Register = (on) => {
       });
       return { deny: plan.deny };
     }
+    // Agent setup, asked for by the person: the spawn is held once; the parent asks them which
+    // agent, for what and on which model (the recommended one named), then spawns with `model`.
+    // Not tied to shadow mode: the person asked for it. Not in Fable mode: there is one model, nothing to choose.
+    if (S.agentSetup && S.cfg.agents.setup && fixedModel(S.cfg) === undefined && !('workflow' in e && e.workflow)) {
+      const key = `${S.project}|${e.description.trim().toLowerCase()}`;
+      if (!S.setupAsked.has(key)) {
+        S.setupAsked.add(key);
+        if (S.setupAsked.size > 500) S.setupAsked.delete(S.setupAsked.values().next().value as string);
+        const text = setupDenyText({
+          description: e.description,
+          subagentType: e.subagentType,
+          agent: plan.agent?.name,
+          recommended: plan.model ?? e.model ?? e.parentModel,
+          recommendedWhy: plan.decision?.reasons ?? [],
+          models: S.cfg.models,
+        });
+        await ledger($, {
+          kind: 'brief',
+          scope: 'subagent',
+          subagentType: e.subagentType,
+          text: clip(e.description, 160),
+          reasons: ['agent setup: held for the person to choose agent and model'],
+          applied: true,
+          rate: plan.rate,
+        });
+        return { deny: text };
+      }
+    }
     const { notes, memory } = await withNotes();
     if (shadow()) {
       const result = await next(e);
@@ -3084,7 +3159,7 @@ export const register: Register = (on) => {
         text: clip(e.description, 160),
         model: plan.model ?? result.model,
         effort: plan.decision?.effort,
-        pStrong: plan.signals?.pStrong,
+        pStrong: plan.signals?.effortOnly ? undefined : plan.signals?.pStrong,
         effortScore: plan.signals?.effortExpected,
         risky: plan.signals?.risky,
         pressure: plan.pressure,
@@ -3102,7 +3177,9 @@ export const register: Register = (on) => {
     const sub: SubState | undefined = plan.decision
       ? {
           tier: plan.decision.tier,
-          ...(plan.decision.light && S.cfg.router.lightSubagents === 'on' ? { light: true } : {}),
+          ...(plan.decision.light && S.cfg.router.lightSubagents === 'on' && !plan.explicit ? { light: true } : {}),
+          // Fable mode: set on every step, whatever the agent's own definition names.
+          ...(fixed !== undefined ? { model: fixed } : {}),
           effort: plan.decision.effort,
           agent: plan.agent?.name,
           errors: 0,
@@ -3294,6 +3371,14 @@ export const register: Register = (on) => {
           (e.attachments?.length ? L(' (вложения прикрепите заново)', ' (attach the attachments again)') : '') +
           '.',
       };
+    }
+    if (typed && S.cfg.agents.setup && fixedModel(S.cfg) === undefined) {
+      const setup = agentSetupIntent(e.text);
+      if (setup !== undefined && setup !== S.agentSetup) {
+        S.agentSetup = setup;
+        S.setupAsked.clear();
+        $.ui.toast(setup ? L('jev-governor: настройка агентов включена — спрошу про каждого', 'jev-governor: agent setup on — I will ask about every agent') : L('jev-governor: настройка агентов выключена', 'jev-governor: agent setup off'));
+      }
     }
     // The memory's notes go with the first real task of a conversation, typed by the person.
     const recall = async (x: typeof e) => (typed ? withRecall($, x) : x);

@@ -16,10 +16,12 @@ export const DEFAULT_CONFIG: GovernorConfig = {
     subagentTimeoutMs: 8000,
   },
   models: { standard: 'claude-sonnet-5-5', strong: 'claude-opus-5-5', light: 'claude-haiku-5-5' },
+  fable: { enabled: false, model: 'claude-fable-5-2' },
   router: {
     mainModel: true,
     mainEffort: true,
     subagents: true,
+    respectExplicitModel: true,
     upgradeAt: 0.55,
     forceUpgradeAt: 0.8,
     downgradeAt: 0.65,
@@ -60,6 +62,7 @@ export const DEFAULT_CONFIG: GovernorConfig = {
     autoMergeHours: 24,
     waitHint: true,
     scopeNote: true,
+    setup: true,
     fileLines: 300,
     delegationGuide: true,
     brief: 'shadow',
@@ -242,7 +245,8 @@ export function resolveConfig(raw: unknown): GovernorConfig {
   const c = isObject(raw) ? raw : {};
   const jev = isObject(c.jev) ? c.jev : {};
   const models = isObject(c.models) ? c.models : {};
-  const r = isObject(c.router) ? c.router : {};
+  const fable = isObject(c.fable) ? c.fable : {};
+  const r =isObject(c.router) ? c.router : {};
   const a = isObject(c.agents) ? c.agents : {};
   const k = isObject(c.compaction) ? c.compaction : {};
   const t = isObject(c.trim) ? c.trim : {};
@@ -276,10 +280,12 @@ export function resolveConfig(raw: unknown): GovernorConfig {
       // Haiku 4.5 named in an older config: Haiku 5.5 replaces it (cheaper, effort levels, 1M window).
       light: /haiku-4|3(-5)?-haiku/i.test(str(models.light, d.models.light)) ? d.models.light : str(models.light, d.models.light),
     },
+    fable: { enabled: bool(fable.enabled, d.fable.enabled), model: str(fable.model, d.fable.model) },
     router: {
       mainModel: bool(r.mainModel, d.router.mainModel),
       mainEffort: bool(r.mainEffort, d.router.mainEffort),
       subagents: bool(r.subagents, d.router.subagents),
+      respectExplicitModel: bool(r.respectExplicitModel, d.router.respectExplicitModel),
       upgradeAt: num(r.upgradeAt, d.router.upgradeAt, 0, 1),
       forceUpgradeAt: num(r.forceUpgradeAt, d.router.forceUpgradeAt, 0, 1),
       downgradeAt: num(r.downgradeAt, d.router.downgradeAt, 0, 1),
@@ -324,6 +330,7 @@ export function resolveConfig(raw: unknown): GovernorConfig {
       autoMergeHours: num(a.autoMergeHours, d.agents.autoMergeHours, 0, 24 * 30),
       waitHint: bool(a.waitHint, d.agents.waitHint),
       scopeNote: bool(a.scopeNote, d.agents.scopeNote),
+      setup: bool(a.setup, d.agents.setup),
       fileLines: num(a.fileLines, d.agents.fileLines, 50, 2000),
       delegationGuide: bool(a.delegationGuide, d.agents.delegationGuide),
       brief: a.brief === 'shadow' || a.brief === 'off' || a.brief === 'on' ? a.brief : d.agents.brief,

@@ -268,3 +268,6 @@ splits the managed turns' cost into input, output, cache reads and cache writes.
   `startCommand` (empty: `scripts/mnema-local.sh start`), `recallOnStart` (true), `recallForSubagents` (true),
   `subagentMinChars` (200), `saveOnHandoff` (true), `autoSave` (true, 0.3.10), `autoSaveModel` (`claude-haiku-5-5`, reads the dialog), `autoSaveCheckModel` (`claude-sonnet-5-5`, checks the few candidates), `autoSaveEveryTurns` (6), `autoSaveIdleMinutes` (3), `autoSaveMaxFacts` (3), `modelTools` (true), `modelRecall` (false), `maxChars` (2500), `maxFacts` (12),
   `timeoutMs` (2500). See README, "Long-term memory".
+- `fable` (Fable mode): `enabled` (false), `model` (`claude-fable-5-2`). On: every turn and subagent runs on `model`, Jev is
+  asked only for the effort (no tier questions; turn and subagent entries carry no `pStrong`). See
+  docs/ARCHITECTURE.md, "Fable mode".

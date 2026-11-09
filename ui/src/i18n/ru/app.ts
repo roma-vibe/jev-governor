@@ -18,6 +18,7 @@ export default {
   Off: 'Выключен',
   'The mod only records decisions and changes nothing': 'Мод только записывает решения и ничего не меняет',
   'shadow mode': 'наблюдение',
+  'Everything runs on this model; Jev picks only the effort': 'Всё идёт на этой модели; Jev выбирает только усилие',
   'The OpenRouter key is set in Settings': 'Ключ OpenRouter задаётся в настройках',
   Sections: 'Разделы',
   'No connection to the server. Check that it is running:': 'Нет связи с сервером. Проверьте, что он запущен:',

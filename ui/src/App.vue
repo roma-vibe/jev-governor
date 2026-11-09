@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
 
+import { modelLabel } from '../../hooks/lib/providers.ts';
 import { connection } from './api.ts';
 import Agents from './components/Agents.vue';
 import Journal from './components/Journal.vue';
@@ -98,6 +99,15 @@ onMounted(() => {
       >
         {{ t('shadow mode') }}
       </span>
+      <a
+        v-if="store.config?.fable.enabled"
+        href="#/settings"
+        class="badge badge-indigo"
+        :title="t('Everything runs on this model; Jev picks only the effort')"
+        @click.prevent="go('/settings')"
+      >
+        {{ modelLabel(store.config.fable.model) }}
+      </a>
       <a
         href="#/settings/basics"
         class="badge"

@@ -72,9 +72,15 @@ const RISKY: JevQuestions = {
   },
 };
 
-export function mainQuestions(): JevQuestions {
+/** The one model everything runs on in Fable mode (`fable.enabled`); undefined when the mode is off. */
+export function fixedModel(config: GovernorConfig): string | undefined {
+  return config.fable.enabled ? config.fable.model : undefined;
+}
+
+/** `effortOnly` (Fable mode): the model is fixed, so the tier is not asked. */
+export function mainQuestions(effortOnly = false): JevQuestions {
   return {
-    ...tierQuestions('latest_user_request, done by the assistant in this conversation'),
+    ...(effortOnly ? {} : tierQuestions('latest_user_request, done by the assistant in this conversation')),
     ...effortQuestion('the next assistant turn on latest_user_request'),
     ...RISKY,
     continuation: {
@@ -95,9 +101,9 @@ export function mainQuestions(): JevQuestions {
   };
 }
 
-export function subagentQuestions(): JevQuestions {
+export function subagentQuestions(effortOnly = false): JevQuestions {
   return {
-    ...tierQuestions('the subagent task'),
+    ...(effortOnly ? {} : tierQuestions('the subagent task')),
     ...effortQuestion('the subagent task'),
     ...RISKY,
   };
@@ -120,16 +126,20 @@ export type Signals = {
   newTopic: number;
   /** P(the request corrects the previous answer: it was wrong or incomplete); 0 when not asked. */
   correction?: number;
+  /** The tier was not asked (Fable mode): `pStrong` is 0 and means nothing. */
+  effortOnly?: true;
 };
 
-export function readSignals(answers: Record<string, JevAnswer>): Signals | undefined {
+/** `effortOnly` (Fable mode): no tier answers are expected; an effort or risk answer is enough. */
+export function readSignals(answers: Record<string, JevAnswer>, effortOnly = false): Signals | undefined {
   const tiers = [choice(answers, 'tier_a'), choice(answers, 'tier_b')]
     .map((answer) => answer?.probabilities.strong)
     .filter((p): p is number => typeof p === 'number' && Number.isFinite(p));
-  if (tiers.length === 0) return undefined;
   const effort = score(answers, 'effort');
+  if (effortOnly ? effort === undefined && noul(answers, 'risky') === undefined : tiers.length === 0) return undefined;
   return {
-    pStrong: tiers.reduce((sum, p) => sum + p, 0) / tiers.length,
+    ...(effortOnly ? { effortOnly } : {}),
+    pStrong: effortOnly || tiers.length === 0 ? 0 : tiers.reduce((sum, p) => sum + p, 0) / tiers.length,
     effortExpected: effort?.expected,
     effortConfidence: effort?.confidence ?? 0,
     risky: noul(answers, 'risky') ?? 0,
@@ -296,6 +306,10 @@ export function decideMain(signals: Signals, ctx: MainContext, config: GovernorC
     return { tier: ctx.currentTier, effort: r.defaultEffort, keepEffort: true, switched: false, reasons };
   }
   const effort = chooseEffort(signals, ctx.pressure, config, reasons, ctx.previous?.effort);
+  if (config.fable.enabled) {
+    reasons.push('Fable mode: model fixed, effort only');
+    return { tier: ctx.currentTier, effort, switched: false, reasons };
+  }
   if (!r.mainModel) return { tier: ctx.currentTier, effort, switched: false, reasons };
 
   const tokens = ctx.contextTokens ?? Number.POSITIVE_INFINITY;
@@ -381,6 +395,11 @@ export function decideSubagent(
   const reasons: string[] = [];
   const effort = ctx.pinnedEffort ?? chooseEffort(signals, ctx.pressure, config, reasons);
   if (ctx.pinnedEffort) reasons.push('effort pinned by agent');
+  // Fable mode: the tier is a placeholder (nothing reads a model from it), no light model.
+  if (config.fable.enabled) {
+    reasons.push('Fable mode: model fixed, effort only');
+    return { tier: ctx.pinnedTier ?? 'strong', effort, switched: false, reasons };
+  }
   let tier: Tier;
   let light = false;
   if (ctx.pinnedTier) {

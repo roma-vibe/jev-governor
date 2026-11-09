@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveConfig } from '../hooks/lib/config.ts';
+import { modelLabel } from '../hooks/lib/providers.ts';
 import { addStepUsage, archiveOf, learnTurn, noteToolResult, S, stepKey, turnUsageParts } from '../hooks/mod/state.ts';
 import {
   chooseEffort,
@@ -8,10 +9,12 @@ import {
   decideSubagent,
   escalate,
   fallbackDecision,
+  fixedModel,
   looksLikeReading,
   isShortFollowUp,
   mainQuestions,
   readSignals,
+  subagentQuestions,
   switchEconomics,
   tierOf,
   type Signals,
@@ -225,6 +228,59 @@ describe('decideSubagent', () => {
       cfg,
     );
     expect(d).toMatchObject({ tier: 'strong', effort: 'low' });
+  });
+});
+
+describe('Fable mode', () => {
+  const fable = resolveConfig({ fable: { enabled: true } });
+  const effort = (score: number) => ({ score, confidence: 0.9, probabilities: { [String(score)]: 1 } });
+
+  it('is off by default, names Fable 5.2 and keeps a model set by hand', () => {
+    expect(cfg.fable).toEqual({ enabled: false, model: 'claude-fable-5-2' });
+    expect(fixedModel(cfg)).toBeUndefined();
+    expect(fixedModel(fable)).toBe('claude-fable-5-2');
+    expect(fixedModel(resolveConfig({ fable: { enabled: true, model: ' claude-fable-5-3 ' } }))).toBe('claude-fable-5-3');
+    expect(resolveConfig({ fable: { enabled: 'yes', model: '' } }).fable).toEqual({ enabled: false, model: 'claude-fable-5-2' });
+  });
+
+  it('asks Jev for the effort and not for the tier', () => {
+    expect(Object.keys(mainQuestions(true))).toEqual(['effort', 'risky', 'continuation', 'new_topic', 'correction']);
+    expect(Object.keys(subagentQuestions(true))).toEqual(['effort', 'risky']);
+    expect(Object.keys(mainQuestions())).toContain('tier_a');
+    const read = readSignals({ effort: effort(3), risky: { noul: 0.1 }, new_topic: { noul: 0.9 } }, true);
+    expect(read).toMatchObject({ effortOnly: true, effortExpected: 3, risky: 0.1, newTopic: 0.9 });
+    expect(readSignals({}, true)).toBeUndefined();
+    // Without the mode the same answers decide nothing: the tier is missing.
+    expect(readSignals({ effort: effort(3) })).toBeUndefined();
+  });
+
+  it('keeps the main chat where it is and lets only the effort follow the task', () => {
+    const ctx = { currentTier: 'strong' as const, freeSwitch: true, contextTokens: 10_000, pressure: 0 as const };
+    const easy = decideMain(signals({ pStrong: 0, effortExpected: 1, effortOnly: true }), ctx, fable);
+    expect(easy).toMatchObject({ tier: 'strong', effort: 'medium', switched: false });
+    expect(easy.reasons.join(' ')).toContain('Fable mode');
+    expect(decideMain(signals({ pStrong: 0, effortExpected: 3, effortOnly: true }), ctx, fable).effort).toBe('xhigh');
+    // The risk floor and the budget cap still apply.
+    expect(decideMain(signals({ effortExpected: 0, risky: 0.9, effortOnly: true }), ctx, fable).effort).toBe('high');
+    expect(decideMain(signals({ effortExpected: 4, effortOnly: true }), { ...ctx, pressure: 3 }, fable).effort).toBe('medium');
+  });
+
+  it('gives a subagent the effort only: no light model, a pinned effort kept', () => {
+    const reader = decideSubagent(signals({ pStrong: 0, effortExpected: 1, effortOnly: true }), { pressure: 0, subagentType: 'Explore' }, fable);
+    expect(reader).toMatchObject({ effort: 'medium', switched: false });
+    expect(reader.light).toBeUndefined();
+    const pinned = decideSubagent(signals({ effortExpected: 3, effortOnly: true }), { pressure: 0, subagentType: 'jev-governor:x', pinnedTier: 'standard', pinnedEffort: 'low' }, fable);
+    expect(pinned).toMatchObject({ tier: 'standard', effort: 'low' });
+  });
+});
+
+describe('modelLabel', () => {
+  it('names a model id the way people do', () => {
+    expect(modelLabel('claude-fable-5-2')).toBe('Fable 5.2');
+    expect(modelLabel('claude-opus-5-5')).toBe('Opus 5.5');
+    expect(modelLabel('claude-fable-5')).toBe('Fable 5');
+    expect(modelLabel('claude-haiku-4-5-20251001')).toBe('Haiku 4.5');
+    expect(modelLabel('fable')).toBe('fable');
   });
 });
 

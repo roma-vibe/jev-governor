@@ -1209,6 +1209,141 @@ describe('jev-governor hooks against a fake engine', () => {
     }
   });
 
+  it('a model named in the Agent call is kept; agent setup holds each spawn once, with a recommendation, until it is ended', async () => {
+    await startSession('setup-session');
+    jevTier = 'strong';
+    const spawn = async (description: string, model?: string): Promise<{ seen: any; result: any }> => {
+      let seen: any;
+      const result = await emit(
+        'agent.spawn',
+        { subagentType: 'general-purpose', description, prompt: `Do: ${description}`, parentModel: 'claude-opus-5-5', ...(model ? { model } : {}) },
+        async (x: any) => {
+          seen = x;
+          return { agentId: `a-${description}`, model: x.model ?? x.parentModel };
+        },
+      );
+      return { seen, result };
+    };
+    // Explicit: kept, though the router would choose another.
+    jevTier = 'standard';
+    expect((await spawn('Explicit one', 'claude-opus-5-5')).seen.model).toBe('claude-opus-5-5');
+    expect((await spawn('Explicit two', 'claude-haiku-5-5')).seen.model).toBe('claude-haiku-5-5');
+    // Setup asked for in the person's words: the first spawn is held.
+    await emit('prompt.submit', { text: 'Давай настроим агентов для этой задачи' });
+    const held = await spawn('Write the tests');
+    expect(held.seen).toBeUndefined();
+    expect(held.result.deny).toContain('AskUserQuestion');
+    expect(held.result.deny).toContain('Recommended model');
+    // The same task again, now with the person's model, goes through and keeps it.
+    expect((await spawn('Write the tests', 'claude-haiku-5-5')).seen.model).toBe('claude-haiku-5-5');
+    // Another agent is held too; ending the setup lets spawns through.
+    expect((await spawn('Review the diff')).result.deny).toBeDefined();
+    await emit('prompt.submit', { text: 'хватит спрашивать про агентов' });
+    expect((await spawn('Check the docs')).result.deny).toBeUndefined();
+    jevTier = 'strong';
+  });
+
+  it('Fable mode: every turn and subagent runs on the one model, Jev is asked only for the effort', async () => {
+    const before = files.get(`${DATA}/config.json`)!;
+    const config = JSON.parse(before);
+    config.fable = { enabled: true, model: 'claude-fable-5-2' };
+    files.set(`${DATA}/config.json`, JSON.stringify(config));
+    await startSession('fable-session');
+    messages = oldChat();
+    const ledgerOf = (id: string): Record<string, any>[] =>
+      [...files.entries()].filter(([p]) => p.endsWith(`${id}.jsonl`)).flatMap(([, t]) => t.split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+    const step = async (e: Record<string, unknown>): Promise<{ model: string; effort: unknown }> => {
+      let seen = { model: '', effort: undefined as unknown };
+      const it = handlers.get('turn.step')![0]!($, e, async function* (x: any) {
+        seen = { model: x.model, effort: x.effort };
+        yield x;
+      });
+      for await (const _ of it as AsyncIterable<unknown>) {
+        // drain
+      }
+      return seen;
+    };
+    const turn = async (id: string, text: string): Promise<{ model: string; effort: unknown }> => {
+      await emit('turn.start', { turnId: id, text });
+      return step({ turnId: id, model: sessionModel, effort: 'xhigh' });
+    };
+    const spawn = async (description: string, model?: string): Promise<{ seen: any; result: any }> => {
+      let seen: any;
+      const result = await emit(
+        'agent.spawn',
+        { subagentType: 'general-purpose', description, prompt: `Do: ${description}`, parentModel: 'claude-opus-5-5', ...(model ? { model } : {}) },
+        async (x: any) => {
+          seen = x;
+          return { agentId: `f-${description}`, model: x.model ?? x.parentModel };
+        },
+      );
+      return { seen, result };
+    };
+    const tierBefore = jevTier;
+    const scoreBefore = jevEffortScore;
+    try {
+      // Jev would send this to Sonnet at high effort: the model is Fable, the effort is Jev's.
+      jevTier = 'standard';
+      jevEffortScore = 2;
+      bodies.length = 0;
+      expect(await turn('f1', 'переименуй переменную в одном файле')).toEqual({ model: 'claude-fable-5-2', effort: 'high' });
+      const asked = Object.keys((JSON.parse(bodies.at(-1)!) as { questions: Record<string, unknown> }).questions);
+      expect(asked).toContain('effort');
+      expect(asked.some((name) => name.startsWith('tier_'))).toBe(false);
+      const first = ledgerOf('fable-session').filter((e) => e.kind === 'turn').at(-1)!;
+      expect(first).toMatchObject({ model: 'claude-fable-5-2', effort: 'high', applied: true });
+      expect(first.pStrong).toBeUndefined();
+      expect(first.reasons.join(' ')).toContain('Fable mode');
+      // A harder task: the same model, more effort; not logged as a switch.
+      jevEffortScore = 3;
+      expect(await turn('f2', 'найди причину гонки в планировщике задач')).toEqual({ model: 'claude-fable-5-2', effort: 'xhigh' });
+      expect(ledgerOf('fable-session').filter((e) => e.kind === 'turn').at(-1)!.switched).toBe(false);
+      // /model in the chat does not move it.
+      sessionModel = 'claude-sonnet-5-5';
+      expect((await turn('f3', 'добавь проверку входных данных в обработчик')).model).toBe('claude-fable-5-2');
+      sessionModel = 'claude-opus-5-5';
+      // Jev down: still Fable, with the previous effort.
+      jevDown = true;
+      expect(await turn('f4', 'теперь ещё раз проверь линтер')).toEqual({ model: 'claude-fable-5-2', effort: 'xhigh' });
+      jevDown = false;
+      // Subagents: Fable too, whatever the call names; the effort is routed and set on every step.
+      jevEffortScore = 1;
+      const plainSpawn = await spawn('Rename the helper');
+      expect(plainSpawn.seen.model).toBe('claude-fable-5-2');
+      expect((await spawn('Summarize the README', 'claude-haiku-5-5')).seen.model).toBe('claude-fable-5-2');
+      expect(await step({ turnId: 'f5', agentId: plainSpawn.result.agentId, model: 'claude-opus-5-5', effort: 'xhigh' })).toEqual({ model: 'claude-fable-5-2', effort: 'medium' });
+      const sub = ledgerOf('fable-session').filter((e) => e.kind === 'subagent').at(-1)!;
+      expect(sub).toMatchObject({ model: 'claude-fable-5-2', effort: 'medium' });
+      expect(sub.light).toBeUndefined();
+      // A subagent the mod did not route (a fork) follows its parent onto Fable.
+      expect((await step({ turnId: 'f6', agentId: 'fork-1', model: 'claude-opus-5-5', effort: 'high' })).model).toBe('claude-fable-5-2');
+      // Agent setup has nothing to choose between: no spawn is held.
+      await emit('prompt.submit', { text: 'Давай настроим агентов для этой задачи' });
+      expect((await spawn('Write the tests')).result.deny).toBeUndefined();
+      // Shadow mode records what would be done and changes nothing.
+      files.set(`${DATA}/config.json`, JSON.stringify({ ...config, mode: 'shadow' }));
+      await emit('command.run', { command: 'jevg', args: 'reload' }, async () => ({ text: '' }));
+      expect((await turn('f7', 'обнови зависимости в одном пакете')).model).toBe('claude-opus-5-5');
+      expect(ledgerOf('fable-session').filter((e) => e.kind === 'turn').at(-1)!).toMatchObject({ model: 'claude-fable-5-2', applied: false });
+    } finally {
+      jevDown = false;
+      jevTier = tierBefore;
+      jevEffortScore = scoreBefore;
+      sessionModel = 'claude-opus-5-5';
+      files.set(`${DATA}/config.json`, before);
+    }
+    // Off again: the tiers are back.
+    jevTier = 'standard';
+    contextTokens = 40_000;
+    try {
+      await startSession('fable-off-session');
+      expect((await turn('f8', 'переименуй переменную в одном файле')).model).toBe('claude-sonnet-5-5');
+    } finally {
+      jevTier = tierBefore;
+      contextTokens = 412_000;
+    }
+  });
+
   it('a background merge runs when a specialist was drafted since the last pass, once per interval', async () => {
     for (const name of [...files.keys()].filter((p) => p.startsWith(`${DATA}/agents/`))) files.delete(name);
     files.delete(`${DATA}/merge-auto.json`);

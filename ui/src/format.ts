@@ -66,15 +66,15 @@ export function fmtAgo(ts: string | null | undefined): string {
 /** `claude-opus-5-5` -> `Opus 5.5`; unknown ids as they are. */
 export function modelName(model: string | undefined): string {
   if (!model) return '—';
-  const m = /(opus|sonnet|haiku)-(\d+)-(\d+)/i.exec(model);
+  const m = /(fable|opus|sonnet|haiku)-(\d+)-(\d+)/i.exec(model);
   if (!m) return model;
   const family = `${m[1]!.charAt(0).toUpperCase()}${m[1]!.slice(1).toLowerCase()}`;
   return `${family} ${m[2]}.${m[3]}`;
 }
 
-export function modelTone(model: string | undefined): 'opus' | 'sonnet' | 'haiku' | 'other' {
+export function modelTone(model: string | undefined): 'fable' | 'opus' | 'sonnet' | 'haiku' | 'other' {
   const m = (model ?? '').toLowerCase();
-  return m.includes('opus') ? 'opus' : m.includes('sonnet') ? 'sonnet' : m.includes('haiku') ? 'haiku' : 'other';
+  return m.includes('fable') ? 'fable' : m.includes('opus') ? 'opus' : m.includes('sonnet') ? 'sonnet' : m.includes('haiku') ? 'haiku' : 'other';
 }
 
 export function projectName(project: string | undefined): string {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 
+import { modelLabel } from '../../../hooks/lib/providers.ts';
 import { api, notify, type GovernorConfig } from '../api.ts';
 import { t } from '../i18n/index.ts';
 import { go, segments } from '../router.ts';
@@ -132,6 +133,36 @@ function discard(): void {
   if (store.config) sync(store.config);
 }
 
+/** "Fable 5.2" from the model id of the mode, so the card follows a new version set in Models. */
+const fableName = computed(() => modelLabel(store.config?.fable.model ?? ''));
+const fableSaving = ref(false);
+
+/** The mode's switch saves at once, like the “On” badge; unsaved edits of other settings stay as they are. */
+async function toggleFable(on: boolean): Promise<void> {
+  if (!form.value || fableSaving.value) return;
+  fableSaving.value = true;
+  try {
+    const edited = dirty.value;
+    const saved = await api.saveConfig({ fable: { enabled: on } });
+    store.config = saved;
+    if (edited) {
+      form.value.fable.enabled = saved.fable.enabled;
+      const base = JSON.parse(baseline.value) as GovernorConfig;
+      base.fable.enabled = saved.fable.enabled;
+      baseline.value = JSON.stringify(base);
+    }
+    notify(
+      saved.fable.enabled
+        ? t('{model} mode is on. The mod will pick it up on the next turn.', { model: fableName.value })
+        : t('{model} mode is off. The mod chooses between the models again.', { model: fableName.value }),
+    );
+  } catch {
+    // shown as a toast
+  } finally {
+    fableSaving.value = false;
+  }
+}
+
 /** Options of a select; a value stored by hand that is not offered stays visible and selectable. */
 function optionsOf(field: FieldDef): { value: string; label: string }[] {
   const options = field.kind === 'effort' ? effortOptions : (field.options ?? []);
@@ -147,6 +178,39 @@ const stacked = (field: FieldDef): boolean => field.kind === 'text' || field.kin
 <template>
   <div v-if="!form" class="text-sm text-zinc-500">{{ t('Loading…') }}</div>
   <form v-else class="space-y-5" novalidate @submit.prevent="save">
+    <section
+      v-if="!group && store.config"
+      class="card flex items-start gap-4 !p-5"
+      :class="store.config.fable.enabled ? '!border-indigo-400 dark:!border-indigo-500' : ''"
+    >
+      <div class="min-w-0 flex-1">
+        <div class="flex flex-wrap items-center gap-2">
+          <h2 class="text-base font-semibold">{{ t('{model} mode', { model: fableName }) }}</h2>
+          <span v-if="store.config.fable.enabled" class="badge badge-indigo">{{ t('on') }}</span>
+        </div>
+        <p class="help">
+          {{
+            t(
+              'Everything runs on {model}: the main chat and every subagent. Jev no longer chooses between models and picks only the effort for each task and agent. Sonnet/Opus switching, the light model and roles rest while the mode is on; compaction, trimming and memory work as before.',
+              { model: fableName },
+            )
+          }}
+        </p>
+        <p class="help">
+          {{ t('Model') }}: <code class="mono">{{ store.config.fable.model }}</code> ·
+          <a href="#/settings/models" class="text-indigo-600 hover:underline dark:text-indigo-400" @click.prevent="go('/settings/models')">{{
+            t('effort bounds and the model id')
+          }}</a>
+        </p>
+      </div>
+      <Toggle
+        :model-value="store.config.fable.enabled"
+        :disabled="fableSaving"
+        :label="t('{model} mode', { model: fableName })"
+        @update:model-value="toggleFable"
+      />
+    </section>
+
     <div v-if="!group" class="grid grid-cols-2 gap-4 lg:grid-cols-4">
       <a
         v-for="(g, i) in groups"

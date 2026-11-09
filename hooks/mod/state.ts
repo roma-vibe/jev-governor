@@ -148,6 +148,10 @@ export const S = {
   draftLock: Promise.resolve() as Promise<void>,
   /** Tasks whose brief was refused once (`agents.brief` on): the same task again goes through. */
   briefAsked: new Set<string>(),
+  /** The person asked to set agents up: every spawn is held once for their choice of agent and model (agents.setup). */
+  agentSetup: false,
+  /** Tasks already held in agent setup: the same task again goes through. */
+  setupAsked: new Set<string>(),
   mergeBusy: false,
   /** When this session last looked whether a background merge is due (`agents.autoMergeHours`). */
   autoMergeCheckedAt: 0,
@@ -441,6 +445,8 @@ export type SpawnPlan = {
   scoped?: boolean;
   /** The refusal text when the brief is refused (once per task). */
   deny?: string;
+  /** The Agent call named its model and router.respectExplicitModel keeps it. */
+  explicit?: boolean;
 };
 
 /** What identifies a spawn's task in its subagent's first message. */

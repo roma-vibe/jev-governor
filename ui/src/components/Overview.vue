@@ -59,6 +59,7 @@ onUnmounted(() => clearInterval(timer));
 watch(days, () => void load());
 
 const modelRows = [
+  { key: 'fable', dot: 'bg-amber-500' },
   { key: 'sonnet', dot: 'bg-sky-500' },
   { key: 'opus', dot: 'bg-violet-500' },
   { key: 'haiku', dot: 'bg-emerald-500' },
@@ -67,6 +68,8 @@ const modelRows = [
 
 function modelLabel(key: (typeof modelRows)[number]['key']): string {
   switch (key) {
+    case 'fable':
+      return 'Fable';
     case 'sonnet':
       return 'Sonnet';
     case 'opus':
