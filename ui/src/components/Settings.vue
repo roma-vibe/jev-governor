@@ -137,30 +137,43 @@ function discard(): void {
 const fableName = computed(() => modelLabel(store.config?.fable.model ?? ''));
 const fableSaving = ref(false);
 
-/** The mode's switch saves at once, like the “On” badge; unsaved edits of other settings stay as they are. */
-async function toggleFable(on: boolean): Promise<void> {
-  if (!form.value || fableSaving.value) return;
+/** The mode's card saves at once, like the “On” badge; unsaved edits of other settings stay as they are. */
+async function saveFable(patch: Partial<GovernorConfig['fable']>): Promise<GovernorConfig | undefined> {
+  if (!form.value || fableSaving.value) return undefined;
   fableSaving.value = true;
   try {
     const edited = dirty.value;
-    const saved = await api.saveConfig({ fable: { enabled: on } });
+    const saved = await api.saveConfig({ fable: patch });
     store.config = saved;
     if (edited) {
-      form.value.fable.enabled = saved.fable.enabled;
+      const now = Object.fromEntries(Object.keys(patch).map((key) => [key, saved.fable[key as keyof GovernorConfig['fable']]]));
+      Object.assign(form.value.fable, now);
       const base = JSON.parse(baseline.value) as GovernorConfig;
-      base.fable.enabled = saved.fable.enabled;
+      Object.assign(base.fable, now);
       baseline.value = JSON.stringify(base);
     }
-    notify(
-      saved.fable.enabled
-        ? t('{model} mode is on. The mod will pick it up on the next turn.', { model: fableName.value })
-        : t('{model} mode is off. The mod chooses between the models again.', { model: fableName.value }),
-    );
+    return saved;
   } catch {
     // shown as a toast
+    return undefined;
   } finally {
     fableSaving.value = false;
   }
+}
+
+async function toggleFable(on: boolean): Promise<void> {
+  const saved = await saveFable({ enabled: on });
+  if (!saved) return;
+  notify(
+    saved.fable.enabled
+      ? t('{model} mode is on. The mod will pick it up on the next turn.', { model: fableName.value })
+      : t('{model} mode is off. The mod chooses between the models again.', { model: fableName.value }),
+  );
+}
+
+async function setFableMaxEffort(value: string): Promise<void> {
+  const saved = await saveFable({ maxEffort: value as GovernorConfig['fable']['maxEffort'] });
+  if (saved) notify(t('Maximum effort in {model} mode: {effort}.', { model: fableName.value, effort: saved.fable.maxEffort }));
 }
 
 /** Options of a select; a value stored by hand that is not offered stays visible and selectable. */
@@ -202,6 +215,21 @@ const stacked = (field: FieldDef): boolean => field.kind === 'text' || field.kin
             t('effort bounds and the model id')
           }}</a>
         </p>
+        <div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <label class="label" for="f-fable-max-effort">{{ t('Maximum effort in this mode') }}</label>
+          <select
+            id="f-fable-max-effort"
+            class="input !w-28"
+            :disabled="fableSaving"
+            :value="store.config.fable.maxEffort"
+            @change="setFableMaxEffort(($event.target as HTMLSelectElement).value)"
+          >
+            <option v-for="o in effortOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+          </select>
+          <p class="help !mt-0 basis-full">
+            {{ t('No request goes above this level while the mode is on: not Jev’s choice, not the raise after tool errors, not a specialist’s own effort, not the effort set in the chat. “max” sets no limit.') }}
+          </p>
+        </div>
       </div>
       <Toggle
         :model-value="store.config.fable.enabled"

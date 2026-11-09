@@ -4,6 +4,7 @@ import { resolveConfig } from '../hooks/lib/config.ts';
 import { modelLabel } from '../hooks/lib/providers.ts';
 import { addStepUsage, archiveOf, learnTurn, noteToolResult, S, stepKey, turnUsageParts } from '../hooks/mod/state.ts';
 import {
+  capEffort,
   chooseEffort,
   decideMain,
   decideSubagent,
@@ -236,11 +237,40 @@ describe('Fable mode', () => {
   const effort = (score: number) => ({ score, confidence: 0.9, probabilities: { [String(score)]: 1 } });
 
   it('is off by default, names Fable 5.2 and keeps a model set by hand', () => {
-    expect(cfg.fable).toEqual({ enabled: false, model: 'claude-fable-5-2' });
+    expect(cfg.fable).toEqual({ enabled: false, model: 'claude-fable-5-2', maxEffort: 'max' });
     expect(fixedModel(cfg)).toBeUndefined();
     expect(fixedModel(fable)).toBe('claude-fable-5-2');
     expect(fixedModel(resolveConfig({ fable: { enabled: true, model: ' claude-fable-5-3 ' } }))).toBe('claude-fable-5-3');
-    expect(resolveConfig({ fable: { enabled: 'yes', model: '' } }).fable).toEqual({ enabled: false, model: 'claude-fable-5-2' });
+    expect(resolveConfig({ fable: { enabled: 'yes', model: '', maxEffort: 'huge' } }).fable).toEqual({ enabled: false, model: 'claude-fable-5-2', maxEffort: 'max' });
+  });
+
+  it('stops every effort at the mode\'s maximum, and only while the mode is on', () => {
+    const ctx = { currentTier: 'strong' as const, freeSwitch: true, contextTokens: 10_000, pressure: 0 as const };
+    const capped = resolveConfig({ fable: { enabled: true, maxEffort: 'high' } });
+    // Jev's choice, the risk floor, an escalation and the fallback.
+    expect(decideMain(signals({ effortExpected: 4, effortOnly: true }), ctx, capped).effort).toBe('high');
+    expect(decideMain(signals({ effortExpected: 1, effortOnly: true }), ctx, capped).effort).toBe('medium');
+    expect(escalate('high', 2, capped)).toBe('high');
+    const medium = resolveConfig({ fable: { enabled: true, maxEffort: 'medium' } });
+    expect(decideMain(signals({ effortExpected: 0, risky: 0.9, effortOnly: true }), ctx, medium).effort).toBe('medium');
+    expect(fallbackDecision('strong', 'Jev unavailable', medium).effort).toBe('medium');
+    // A specialist's pinned effort, and an effort nobody routed.
+    const pinned = decideSubagent(signals({ effortOnly: true }), { pressure: 0, subagentType: 'jev-governor:x', pinnedEffort: 'max' }, capped);
+    expect(pinned.effort).toBe('high');
+    expect(pinned.reasons.join(' ')).toContain('maximum');
+    expect(capEffort('xhigh', capped)).toBe('high');
+    expect(capEffort('low', capped)).toBe('low');
+    expect(capEffort(undefined, capped)).toBeUndefined();
+    // Below router.minEffort (medium) the maximum wins.
+    const low = resolveConfig({ fable: { enabled: true, maxEffort: 'low' } });
+    expect(decideMain(signals({ effortExpected: 3, effortOnly: true }), ctx, low).effort).toBe('low');
+    // router.maxEffort still holds when it is the lower one.
+    const both = resolveConfig({ fable: { enabled: true, maxEffort: 'xhigh' }, router: { maxEffort: 'high' } });
+    expect(decideMain(signals({ effortExpected: 4, effortOnly: true }), ctx, both).effort).toBe('high');
+    // Mode off: the setting does nothing.
+    const off = resolveConfig({ fable: { enabled: false, maxEffort: 'low' } });
+    expect(decideMain(signals({ pStrong: 0.9, effortExpected: 3 }), ctx, off).effort).toBe('xhigh');
+    expect(capEffort('xhigh', off)).toBe('xhigh');
   });
 
   it('asks Jev for the effort and not for the tier', () => {

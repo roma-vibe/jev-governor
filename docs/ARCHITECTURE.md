@@ -94,6 +94,10 @@ page on, every step of the main chat and of every subagent runs on `fable.model`
 - Nothing moves the model: no Sonnet/Opus switch, no light model, no roles, no agent setup hold
   (one model, nothing to choose). A model named in the Agent call, a specialist's pinned tier and
   a `/model` change in the chat give way; a specialist's pinned effort is kept.
+- `fable.maxEffort` (`max`, a dropdown on the mode's card) is the highest effort a request of the
+  mode carries: Jev's choice, the risk floor, an escalation, the fallback, a pinned effort and the
+  session's own effort on a step nobody routed all stop at it. It wins over `router.minEffort`;
+  `router.maxEffort` holds too when it is the lower one.
 - The model is set also where nothing was decided: no Jev key, Jev down, the handoff brief turn,
   a fork or another subagent the mod did not route. With `router.mainEffort` or
   `router.subagents` off the effort there is left alone, the model still set.

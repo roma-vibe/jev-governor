@@ -30,6 +30,10 @@ export default {
   'effort bounds and the model id': 'границы усилия и идентификатор модели',
   '{model} mode is on. The mod will pick it up on the next turn.': 'Режим {model} включён. Мод подхватит его со следующего хода.',
   '{model} mode is off. The mod chooses between the models again.': 'Режим {model} выключен. Мод снова выбирает между моделями.',
+  'Maximum effort in this mode': 'Максимальное усилие в этом режиме',
+  'No request goes above this level while the mode is on: not Jev’s choice, not the raise after tool errors, not a specialist’s own effort, not the effort set in the chat. “max” sets no limit.':
+    'Пока режим включён, ни один запрос не идёт выше этого уровня: ни выбор Jev, ни повышение после ошибок инструментов, ни собственное усилие специалиста, ни усилие, заданное в чате. «max» — без ограничения.',
+  'Maximum effort in {model} mode: {effort}.': 'Максимальное усилие в режиме {model}: {effort}.',
   'Fable mode model': 'Модель режима Fable',
   'The one model everything runs on while Fable mode is on (the switch at the top of Settings). The tiers above are not used then; the effort bounds below still apply.':
     'Единственная модель, на которой всё идёт, пока включён режим Fable (переключатель вверху настроек). Уровни выше тогда не используются; границы усилия ниже действуют по-прежнему.',

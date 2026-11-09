@@ -66,6 +66,7 @@ import {
   withWaitNote,
 } from './lib/registry.ts';
 import {
+  capEffort,
   decideMain,
   decideSubagent,
   escalate,
@@ -2584,7 +2585,14 @@ async function statusReport($: EngineInterface): Promise<string> {
   const prev = S.route.previous;
   const lines = [
     `jev-governor ${cfg.enabled ? (S.chat.off ? 'OFF in this chat (/jevg chat on)' : `ON (${shadow() ? L('наблюдение', 'shadow') : 'active'})`) : 'OFF'} · key ${S.key ? 'found' : 'MISSING'} · Jev ${cfg.jev.model}${isExcluded(cfg, S.cwd, S.home) ? L(' · проект исключён: к Jev ничего не уходит', ' · project excluded: nothing is sent to Jev') : ''}`,
-    ...(cfg.fable.enabled ? [L(`режим ${modelLabel(cfg.fable.model)}: всё идёт на ${cfg.fable.model}, Jev выбирает только усилие`, `${modelLabel(cfg.fable.model)} mode: everything runs on ${cfg.fable.model}, Jev picks only the effort`)] : []),
+    ...(cfg.fable.enabled
+      ? [
+          L(
+            `режим ${modelLabel(cfg.fable.model)}: всё идёт на ${cfg.fable.model}, Jev выбирает только усилие (не выше ${cfg.fable.maxEffort})`,
+            `${modelLabel(cfg.fable.model)} mode: everything runs on ${cfg.fable.model}, Jev picks only the effort (at most ${cfg.fable.maxEffort})`,
+          ),
+        ]
+      : []),
     `routing: main model ${cfg.fable.enabled ? 'fixed' : cfg.router.mainModel ? 'on' : 'off'}, main effort ${cfg.router.mainEffort ? 'on' : 'off'}, subagents ${cfg.router.subagents ? 'on' : 'off'}; compaction ${cfg.compaction.enabled ? `on (at ${Math.round(cfg.compaction.compactAtTokens / 1000)}k${cfg.compaction.archive ? ', archive' : ''})` : 'off'}; handoff ${cfg.handoff.enabled ? 'on' : 'off'}`,
     `last: ${S.route.lastModel ? displayModel(S.route.lastModel) : '—'}${prev ? ` · ${prev.effort}` : ''} · budget ${budget.text || 'n/a'} (pressure ${budget.pressure})`,
     `${registryLine()} (/jevg agents)`,
@@ -2854,7 +2862,9 @@ export const register: Register = (on) => {
     const pin = (x: typeof e): typeof e => {
       if (fixed === undefined) return x;
       if (x.agentId === undefined) S.route.lastModel = fixed;
-      return x.model === fixed ? x : { ...x, model: fixed };
+      // The mode's maximum holds for an effort nobody routed too (the session's own, the brief's).
+      const effort = capEffort(x.effort, S.cfg);
+      return x.model === fixed && effort === x.effort ? x : { ...x, model: fixed, ...(effort !== x.effort ? { effort } : {}) };
     };
     // The handoff brief: same model (its cache is what makes it cheap), no deep reasoning needed.
     if (e.agentId === undefined && S.handoff?.turnId === e.turnId) {
@@ -2938,7 +2948,7 @@ export const register: Register = (on) => {
       turn.rewroteCache = (switched && (applied || outcome.manual === true)) || wasFree || outcome.cacheCold === true;
       // What the mod's own switch cost: a warm cache rewritten on the other model (savings count it).
       const rewrite = switched && applied && !outcome.manual && !wasFree && !outcome.cacheCold ? outcome.contextTokens : undefined;
-      const shown = statusText(model, effort ?? (typeof e.effort === 'string' ? e.effort : undefined), outcome.pressureText);
+      const shown = statusText(model, effort ?? capEffort(typeof e.effort === 'string' ? e.effort : undefined, S.cfg), outcome.pressureText);
       // While Jev fails, the ✕ stays (a bare "go on" decided without Jev would hide it).
       if (S.cfg.ui.showStatus && S.jevFailures < JEV_FAILS_SHOWN) $.ui.status(applied ? shown : `${shown} (${L('наблюдение', 'shadow')})`);
       if (switched && applied) {
@@ -2973,7 +2983,7 @@ export const register: Register = (on) => {
     }
     if (!applied) return yield* counted(e);
     if (effort) turn.sentEffort = effort;
-    return yield* counted({ ...e, model, ...(effort ? { effort } : {}) });
+    return yield* counted(pin({ ...e, model, ...(effort ? { effort } : {}) }));
   });
 
   // Long, unused tools behind ToolSearch; decided once per tool for the life of this process.

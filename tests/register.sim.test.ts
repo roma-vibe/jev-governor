@@ -1317,6 +1317,15 @@ describe('jev-governor hooks against a fake engine', () => {
       expect(sub.light).toBeUndefined();
       // A subagent the mod did not route (a fork) follows its parent onto Fable.
       expect((await step({ turnId: 'f6', agentId: 'fork-1', model: 'claude-opus-5-5', effort: 'high' })).model).toBe('claude-fable-5-2');
+      // The mode's maximum effort: Jev's choice and the own effort of a step nobody routed stop at it.
+      config.fable.maxEffort = 'high';
+      files.set(`${DATA}/config.json`, JSON.stringify(config));
+      await emit('command.run', { command: 'jevg', args: 'reload' }, async () => ({ text: '' }));
+      jevEffortScore = 4;
+      expect(await turn('f6a', 'разберись с утечкой памяти в воркере очереди')).toEqual({ model: 'claude-fable-5-2', effort: 'high' });
+      expect(ledgerOf('fable-session').filter((e) => e.kind === 'turn').at(-1)!.effort).toBe('high');
+      expect(await step({ turnId: 'f6b', agentId: 'fork-2', model: 'claude-opus-5-5', effort: 'max' })).toEqual({ model: 'claude-fable-5-2', effort: 'high' });
+      expect((await step({ turnId: 'f6c', agentId: 'fork-2', model: 'claude-opus-5-5', effort: 'medium' })).effort).toBe('medium');
       // Agent setup has nothing to choose between: no spawn is held.
       await emit('prompt.submit', { text: 'Давай настроим агентов для этой задачи' });
       expect((await spawn('Write the tests')).result.deny).toBeUndefined();

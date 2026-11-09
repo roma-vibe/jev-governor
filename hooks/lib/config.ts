@@ -16,7 +16,7 @@ export const DEFAULT_CONFIG: GovernorConfig = {
     subagentTimeoutMs: 8000,
   },
   models: { standard: 'claude-sonnet-5-5', strong: 'claude-opus-5-5', light: 'claude-haiku-5-5' },
-  fable: { enabled: false, model: 'claude-fable-5-2' },
+  fable: { enabled: false, model: 'claude-fable-5-2', maxEffort: 'max' },
   router: {
     mainModel: true,
     mainEffort: true,
@@ -280,7 +280,7 @@ export function resolveConfig(raw: unknown): GovernorConfig {
       // Haiku 4.5 named in an older config: Haiku 5.5 replaces it (cheaper, effort levels, 1M window).
       light: /haiku-4|3(-5)?-haiku/i.test(str(models.light, d.models.light)) ? d.models.light : str(models.light, d.models.light),
     },
-    fable: { enabled: bool(fable.enabled, d.fable.enabled), model: str(fable.model, d.fable.model) },
+    fable: { enabled: bool(fable.enabled, d.fable.enabled), model: str(fable.model, d.fable.model), maxEffort: effort(fable.maxEffort, d.fable.maxEffort) },
     router: {
       mainModel: bool(r.mainModel, d.router.mainModel),
       mainEffort: bool(r.mainEffort, d.router.mainEffort),

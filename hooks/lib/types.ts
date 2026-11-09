@@ -50,8 +50,11 @@ export type GovernorConfig = {
    * Fable mode: every turn and every subagent runs on this one model and Jev picks only the
    * effort. The tier is not asked; nothing switches the model (no tiers, no light model, no
    * roles), and a model named in an Agent call or pinned by a specialist gives way to it.
+   * `maxEffort` is the highest effort a request of the mode may carry: Jev's choice, an
+   * escalation, a specialist's pinned effort and the session's own effort all stop at it
+   * (`max`: no limit beyond `router.maxEffort`).
    */
-  fable: { enabled: boolean; model: string };
+  fable: { enabled: boolean; model: string; maxEffort: Effort };
   router: {
     /** Choose the main conversation's model (only where the prompt cache allows). */
     mainModel: boolean;

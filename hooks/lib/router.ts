@@ -190,10 +190,28 @@ export function effortIndex(effort: Effort): number {
   return EFFORTS.indexOf(effort);
 }
 
+/** The highest effort index the settings allow: `router.maxEffort`, and in Fable mode `fable.maxEffort` too. */
+function maxEffortIndex(config: GovernorConfig): number {
+  const max = effortIndex(config.router.maxEffort);
+  return config.fable.enabled ? Math.min(max, effortIndex(config.fable.maxEffort)) : max;
+}
+
+/** The maximum wins over the minimum where they cross (a Fable-mode maximum below `router.minEffort`). */
 function clampEffort(index: number, config: GovernorConfig): Effort {
   const min = effortIndex(config.router.minEffort);
-  const max = effortIndex(config.router.maxEffort);
-  return EFFORTS[Math.min(max, Math.max(min, Math.round(index)))]!;
+  return EFFORTS[Math.min(maxEffortIndex(config), Math.max(min, Math.round(index)))]!;
+}
+
+/**
+ * Fable mode's maximum for an effort the router did not choose (a specialist's pinned effort, the
+ * session's own): lowered to `fable.maxEffort` when above it, never raised. Outside the mode,
+ * and for anything that is not an effort level, the value is returned as it is.
+ */
+export function capEffort<T>(effort: T, config: GovernorConfig): T | Effort {
+  if (!config.fable.enabled || typeof effort !== 'string') return effort;
+  const index = (EFFORTS as readonly string[]).indexOf(effort);
+  const max = effortIndex(config.fable.maxEffort);
+  return index > max ? EFFORTS[max]! : effort;
 }
 
 export function chooseEffort(
@@ -398,7 +416,9 @@ export function decideSubagent(
   // Fable mode: the tier is a placeholder (nothing reads a model from it), no light model.
   if (config.fable.enabled) {
     reasons.push('Fable mode: model fixed, effort only');
-    return { tier: ctx.pinnedTier ?? 'strong', effort, switched: false, reasons };
+    const capped = capEffort(effort, config) as Effort;
+    if (capped !== effort) reasons.push(`effort ${effort} → ${capped}: the mode's maximum`);
+    return { tier: ctx.pinnedTier ?? 'strong', effort: capped, switched: false, reasons };
   }
   let tier: Tier;
   let light = false;
