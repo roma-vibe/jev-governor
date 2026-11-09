@@ -26,7 +26,7 @@ import { pricable } from './lib/pricable.ts';
 import { afterReset, readReset } from './lib/reset.ts';
 import { createProjects, entriesOfProject } from './lib/projects.ts';
 
-const VERSION = '0.3.10';
+const VERSION = '0.3.15';
 const UI_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(UI_DIR);
 const DIST = path.join(UI_DIR, 'dist');

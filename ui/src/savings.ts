@@ -14,7 +14,7 @@ export function getSources(): { key: SavingSource; label: string; spend?: boolea
 
 export const sourceLabel = (key: SavingSource): string => getSources().find((s) => s.key === key)?.label ?? key;
 
-const FAMILIES: Record<string, string> = { opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku', haiku4: 'Haiku 4', fable: 'Fable' };
+const FAMILIES: Record<string, string> = { opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku', haiku4: 'Haiku 4', fable: 'Fable', fable5: 'Fable 5 / 5.1' };
 export const familyLabel = (f: string | undefined): string => (f ? (FAMILIES[f] ?? f) : '?');
 
 function reasonLabel(reason: string): string {

@@ -2,7 +2,7 @@
 
 [English](README.md) · [Русский](README.ru.md)
 
-![version](https://img.shields.io/badge/version-0.3.14-blue)
+![version](https://img.shields.io/badge/version-0.3.15-blue)
 ![Claude Code](https://img.shields.io/badge/Claude_Code-%E2%89%A5%202.1.287-D97757)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![ToS](https://img.shields.io/badge/ToS-white%20zone%20only-brightgreen)
@@ -22,6 +22,8 @@ Mods shipped in Claude Code 2.1.287. This one uses only that official mechanism:
 
 - **Model and effort per turn.** Effort (`low`…`max`) is picked on every turn. Switching to Sonnet 5.5 is priced in dollars: rewriting the context into the other model's cache against what Sonnet saves on output over the next turns (cache reads cost the same on both). Short continuations ("yes", "go on") are decided locally, without asking Jev.
 - **Subagents.** Model and effort are chosen per task at spawn. Read-only subagents with an easy task run on Haiku 5.5 (a twentieth of Sonnet's price under a 100K-token prompt, a quarter above) and move up to Sonnet when the task grows or tools keep failing. Generic subagents get the role of a matching specialist; if none exists, one is created (short English prompt and skills, drafted by Sonnet 5.5). Near-copies are not drafted, and existing ones are folded into one once a day in the background, or now with `/jevg agents merge` (or the UI button).
+- **Your choice of agent model.** A model named in the Agent call is kept; only the effort is chosen. Say "set up the agents" and every spawn first asks you which agent it is, what for and on which model, with a recommendation (`/jevg agents setup off` ends it).
+- **Fable mode (optional, `fable.enabled`).** One switch at the top of the settings page: every turn and every subagent runs on Fable 5.2, and Jev picks only the effort for each task and agent. Nothing switches the model, so the chat keeps one prompt cache; the Sonnet/Opus tiers, the light model and roles rest while it is on. Compaction, trimming and memory work as before.
 - **Compaction without a summary.** Jev removes stale tool calls and results; the remaining text stays verbatim. It runs when the context reaches 200k (Jev can remove ≥40%), and whenever Claude Code compacts itself. Optionally (off by default, `compaction.onReturn`) also while you are away, once the cache has expired, so that the rewrite on your return is smaller. The mod also sets Claude Code's auto-compact window (`compaction.autoWindowTokens`, 250k) so the engine starts a compaction in the middle of a long turn and inside subagents; those go through Jev too.
 - **Old dialog folded.** At every compaction, earlier answers, agent reports, monitor events and long pastes older than the last two turns keep their first lines and a link to a file with the full text (`compaction.fold`). Jev keeps the ones the current work still relies on. On a long real chat this removed 35–67% of the dialog text per compaction.
 - **Nothing is lost.** Everything compaction removes is archived to files and the history keeps a pointer; Claude reads it back when it needs an old detail.

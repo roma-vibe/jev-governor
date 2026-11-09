@@ -26,13 +26,21 @@
 
 import type { LedgerEntry } from './types.ts';
 
-/** `haiku` is Haiku 5.5 and later; `haiku4` the Haiku 4.x / 3.x models before it. */
-export type Family = 'fable' | 'opus' | 'sonnet' | 'haiku' | 'haiku4';
+/**
+ * `haiku` is Haiku 5.5 and later; `haiku4` the Haiku 4.x / 3.x models before it. `fable` is Fable 5.2
+ * and later (and a bare `fable` alias); `fable5` Fable 5 / 5.1 and their Mythos counterparts, on the
+ * older, dearer card.
+ */
+export type Family = 'fable' | 'fable5' | 'opus' | 'sonnet' | 'haiku' | 'haiku4';
 export type Price = { input: number; output: number; cacheRead: number; write5m: number; write1h: number };
 
 /** $ per million tokens; for a family in LONG_PRICES, the rate for prompts up to its threshold. */
 export const PRICES: Record<Family, Price> = {
-  fable: { input: 10, output: 50, cacheRead: 0.25, write5m: 12.5, write1h: 20 },
+  // Fable 5.2: $8 input / $40 output (2026-11). Its cache prices were not given: Fable 5.1's card
+  // scaled by the same -20% (read 0.25 → 0.2, writes 1.25× and 2× the input). Correct them here
+  // when the published figures are known: cache reads are most of a long session's cost.
+  fable: { input: 8, output: 40, cacheRead: 0.2, write5m: 10, write1h: 16 },
+  fable5: { input: 10, output: 50, cacheRead: 0.25, write5m: 12.5, write1h: 20 },
   opus: { input: 4, output: 20, cacheRead: 0.2, write5m: 5, write1h: 8 },
   sonnet: { input: 2, output: 10, cacheRead: 0.2, write5m: 2.5, write1h: 4 },
   haiku: { input: 0.1, output: 0.5, cacheRead: 0.01, write5m: 0.125, write1h: 0.2 },
@@ -64,7 +72,11 @@ const SUMMARY_OUTPUT_TOKENS = 4000;
 
 export function familyOf(model: string | undefined): Family | undefined {
   const m = (model ?? '').toLowerCase();
-  if (m.includes('fable') || m.includes('mythos')) return 'fable';
+  if (m.includes('fable') || m.includes('mythos')) {
+    // 5 and 5.1 keep their own card; a dated id (`claude-fable-5-20260601`) is not a minor version.
+    const v = /(?:fable|mythos)-(\d+)(?:-(\d{1,2}))?(?!\d)/.exec(m);
+    return v && Number(v[1]) === 5 && Number(v[2] ?? 0) <= 1 ? 'fable5' : 'fable';
+  }
   if (m.includes('opus')) return 'opus';
   if (m.includes('sonnet')) return 'sonnet';
   if (m.includes('haiku')) return /haiku-[34]|3(-5)?-haiku/.test(m) ? 'haiku4' : 'haiku';

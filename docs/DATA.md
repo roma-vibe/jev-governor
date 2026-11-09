@@ -270,4 +270,6 @@ splits the managed turns' cost into input, output, cache reads and cache writes.
   `timeoutMs` (2500). See README, "Long-term memory".
 - `fable` (Fable mode): `enabled` (false), `model` (`claude-fable-5-2`). On: every turn and subagent runs on `model`, Jev is
   asked only for the effort (no tier questions; turn and subagent entries carry no `pStrong`). See
-  docs/ARCHITECTURE.md, "Fable mode".
+  docs/ARCHITECTURE.md, "Fable mode". Priced in `hooks/lib/savings.ts` as family `fable` (Fable 5.2 and later:
+  $8 / $40 per MTok; cache read $0.20 and writes $10 / $16 are scaled from Fable 5.1's card, not published
+  figures); Fable 5 / 5.1 stay on `fable5` ($10 / $50).

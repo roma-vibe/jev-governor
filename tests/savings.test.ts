@@ -26,6 +26,19 @@ describe('prices', () => {
     expect(familyOf('claude-sonnet-5-5')).toBe('sonnet');
     expect(familyOf('gpt-x')).toBeUndefined();
   });
+
+  it('prices Fable 5.2 on its own card ($8 / $40), Fable 5 and 5.1 on the older one', () => {
+    for (const id of ['claude-fable-5-2', 'claude-fable-5-2[1m]', 'claude-fable-5-2-20261101', 'claude-fable-5-3', 'claude-fable-6', 'fable', 'claude-mythos-5-2']) {
+      expect([id, familyOf(id)]).toEqual([id, 'fable']);
+    }
+    for (const id of ['claude-fable-5', 'claude-fable-5-1', 'claude-fable-5-20260601', 'claude-mythos-5-1']) {
+      expect([id, familyOf(id)]).toEqual([id, 'fable5']);
+    }
+    const u = { model: 'claude-fable-5-2', input: 1_000_000, output: 1_000_000, cacheRead: 1_000_000, cacheWrite: 1_000_000 };
+    expect(usageCost(u, familyOf(u.model)!, true)).toBeCloseTo(8 + 40 + 0.2 + 16);
+    expect(usageCost(u, familyOf(u.model)!, false)).toBeCloseTo(8 + 40 + 0.2 + 10);
+    expect(usageCost({ ...u, model: 'claude-fable-5-1' }, familyOf('claude-fable-5-1')!, true)).toBeCloseTo(10 + 50 + 0.25 + 20);
+  });
 });
 
 describe('computeSavings', () => {
