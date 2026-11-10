@@ -10,12 +10,12 @@ import type { Pressure } from '../lib/budget.ts';
 import type { CapsuleMeta } from '../lib/capsule.ts';
 import { collectToolCalls } from '../lib/compaction/state.ts';
 import type { CallDecision, Message } from '../lib/compaction/types.ts';
-import { DEFAULT_CONFIG, isExcluded, isShadow } from '../lib/config.ts';
+import { DEFAULT_CONFIG, isExcluded, isShadow, withChatFable } from '../lib/config.ts';
 import type { Lang } from '../lib/lang.ts';
 import { displayModel } from '../lib/providers.ts';
 import { DEFAULT_TURN, type Decision, type Signals, type TurnProfile } from '../lib/router.ts';
 import type { ToolUse } from '../lib/tools.ts';
-import type { AgentRecord, Effort, GovernorConfig, LedgerEntry, SkillRecord, Tier } from '../lib/types.ts';
+import type { AgentRecord, ChatFable, Effort, GovernorConfig, LedgerEntry, SkillRecord, Tier } from '../lib/types.ts';
 
 export type Route = {
   /** The model id the main loop last sent. */
@@ -129,8 +129,13 @@ export const S = {
   /** The session's project root (`$.session.root()`), not the shell's current folder. */
   cwd: '',
   route: { freeSwitch: true } as Route,
-  /** Per chat, kept in the store: `off` — the mod does nothing here; `idle` — compact after a pause here. */
-  chat: { off: false, idle: false },
+  /**
+   * Per chat, kept in the store: `off` — the mod does nothing here; `idle` — compact after a pause
+   * here; `fable` — this chat's own Fable mode, over the settings (absent: the chat follows them).
+   */
+  chat: { off: false, idle: false } as ChatState,
+  /** The settings' own `fable` block: `cfg.fable` is this with the chat's choice over it. */
+  fileFable: DEFAULT_CONFIG.fable as GovernorConfig['fable'],
   turn: undefined as TurnState | undefined,
   /** What each running turn's steps cost so far (`stepKey` → model → totals); see turnUsageParts. */
   stepUsage: new Map<string, Map<string, StepTotals>>(),
@@ -243,6 +248,24 @@ export function basename(path: string): string {
 }
 
 /** Whether the mod works in this chat: enabled in the config and not switched off for the chat (`/jevg chat off`). */
+export type ChatState = { off: boolean; idle: boolean; fable?: ChatFable };
+
+/** Takes the settings as resolved from the file; the chat's own Fable choice goes over them. */
+export function setConfig(config: GovernorConfig): void {
+  S.fileFable = config.fable;
+  S.cfg = withChatFable(config, S.chat.fable);
+}
+
+/** The chat's Fable choice changed, or another chat's state came in: the same settings, seen by this chat. */
+export function applyChatFable(): void {
+  S.cfg = withChatFable({ ...S.cfg, fable: S.fileFable }, S.chat.fable);
+}
+
+/** What goes to the config file: the chat's own Fable choice is the chat's, never the file's. */
+export function configForFile(): GovernorConfig {
+  return { ...S.cfg, fable: S.fileFable };
+}
+
 export function active(): boolean {
   return S.cfg.enabled && !S.chat.off;
 }

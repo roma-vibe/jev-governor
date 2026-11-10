@@ -34,7 +34,7 @@ import { planFolds, runCompaction, summarizeCompaction } from './lib/compaction/
 import { messageChars } from './lib/compaction/compact.ts';
 import { applyFolds, DEFAULT_FOLD_OPTIONS, foldArchiveText, foldFileName, foldKeeps, foldStats, type FoldOptions } from './lib/compaction/fold.ts';
 import { resolveLang, systemLocales } from './lib/lang.ts';
-import { expandHome, isExcluded, resolveConfig, withPathOverrides } from './lib/config.ts';
+import { expandHome, isExcluded, parseChatFable, readChatFable, resolveConfig, withPathOverrides } from './lib/config.ts';
 import { clip, estimateContextTokens, recentHistory, type HistoryMessage } from './lib/history.ts';
 import { applyRole, briefQuestions, briefVerdict, DELEGATION_GUIDE, agentSetupIntent, denyText, readBrief, setupDenyText, withScopeNote, type BriefSignals, type BriefVerdict } from './lib/brief.ts';
 import { choice, jevAsker, noul, withTimeout, type JevAsker, type JevQuestions, type JevResponse } from './lib/jev.ts';
@@ -93,8 +93,11 @@ import type {
 } from './lib/types.ts';
 
 import {
+  applyChatFable,
   basename,
   cacheWarm,
+  configForFile,
+  setConfig,
   type CapsuleRecord,
   errorText,
   type Handoff,
@@ -168,17 +171,17 @@ async function loadConfig($: EngineInterface, force: boolean): Promise<void> {
     const stat = await $.fs.stat(path);
     if (!force && stat.mtimeMs === S.cfgMtime) return;
     S.cfgRaw = await readJson($, path);
-    S.cfg = resolveConfig(withPathOverrides(S.cfgRaw, S.cwd, S.home));
+    setConfig(resolveConfig(withPathOverrides(S.cfgRaw, S.cwd, S.home)));
     S.cfgMtime = stat.mtimeMs;
     await setLang($);
     // A window changed in the settings takes effect at once (bindSession logs it at start).
     if (!force) await applyAutoWindow($, false);
   } catch {
     // First run: write the defaults so the settings UI has a file to edit.
-    S.cfg = resolveConfig(undefined);
+    setConfig(resolveConfig(undefined));
     await setLang($);
     try {
-      await $.fs.write(path, `${JSON.stringify(S.cfg, null, 2)}\n`);
+      await $.fs.write(path, `${JSON.stringify(configForFile(), null, 2)}\n`);
       S.cfgMtime = (await $.fs.stat(path)).mtimeMs;
     } catch {
       S.cfgMtime = -1;
@@ -249,8 +252,12 @@ function subModel(agentId: string): string | undefined {
 
 async function saveConfig($: EngineInterface): Promise<void> {
   const path = `${S.data}/config.json`;
-  await $.fs.write(path, `${JSON.stringify(S.cfg, null, 2)}\n`);
+  const file = configForFile();
+  await $.fs.write(path, `${JSON.stringify(file, null, 2)}\n`);
   S.cfgMtime = (await $.fs.stat(path)).mtimeMs;
+  // What the file holds now: refreshCwd resolves the settings from it again on every turn, and
+  // with the old copy a `/jevg on` (or `memory on`) was undone at the next turn of the same chat.
+  S.cfgRaw = file;
 }
 
 async function loadKey($: EngineInterface): Promise<void> {
@@ -425,11 +432,13 @@ async function saveChat($: EngineInterface): Promise<void> {
 
 async function restoreChat($: EngineInterface): Promise<void> {
   try {
-    const saved = (await $.store.get(`chat:${S.session}`)) as { off?: unknown; idle?: unknown } | undefined;
-    S.chat = { off: saved?.off === true, idle: saved?.idle === true };
+    const saved = (await $.store.get(`chat:${S.session}`)) as { off?: unknown; idle?: unknown; fable?: unknown } | undefined;
+    const fable = readChatFable(saved?.fable);
+    S.chat = { off: saved?.off === true, idle: saved?.idle === true, ...(fable ? { fable } : {}) };
   } catch {
     S.chat = { off: false, idle: false };
   }
+  applyChatFable();
 }
 
 async function restoreRoute($: EngineInterface): Promise<void> {
@@ -721,7 +730,7 @@ async function refreshCwd($: EngineInterface): Promise<void> {
   try {
     S.cwd = await projectRoot($);
     S.project = basename(S.cwd);
-    if (S.cfgRaw !== undefined) S.cfg = resolveConfig(withPathOverrides(S.cfgRaw, S.cwd, S.home));
+    if (S.cfgRaw !== undefined) setConfig(resolveConfig(withPathOverrides(S.cfgRaw, S.cwd, S.home)));
   } catch {
     // keep the last known folder
   }
@@ -2550,13 +2559,41 @@ async function startUi($: EngineInterface): Promise<string> {
 
 /**
  * `/jevg chat on|off`: the mod does nothing in this chat (no routing, compaction, trimming, requests to Jev).
+ * `/jevg chat fable | fable:<effort> | default | auto`: this chat's own Fable mode, over the settings: on (with
+ * its own maximum effort when given), off as if the setting were off, or following the settings again.
  * `/jevg idle on|off`: compact this chat after a pause even when the setting is off. Both belong to the chat.
  */
 async function chatCommand($: EngineInterface, which: 'chat' | 'idle', arg: string): Promise<string> {
   await loadConfig($, false);
+  const fableLine = (): string => {
+    const own = S.chat.fable;
+    const name = modelLabel(S.cfg.fable.model);
+    if (!own) return `Fable mode: as in the settings (${S.cfg.fable.enabled ? `on, ${name}, effort up to ${S.cfg.fable.maxEffort}` : 'off'})`;
+    // The model is the settings' own (`fable.model`), also while the mode is off there.
+    return own.on
+      ? `Fable mode: ON in this chat on ${name}, effort up to ${S.cfg.fable.maxEffort}${own.maxEffort ? '' : ' (the settings\' maximum)'}`
+      : `Fable mode: OFF in this chat${S.fileFable.enabled ? ' (on in the settings)' : ''}`;
+  };
   const show = (): string =>
-    `This chat: mod ${S.chat.off ? 'OFF' : 'on'}; compaction after a pause ${S.cfg.compaction.onReturn ? 'on (setting)' : S.chat.idle ? 'on (this chat)' : 'off'}.`;
-  if (arg !== 'on' && arg !== 'off') return `${show()}\nUsage: /jevg ${which} on|off`;
+    `This chat: mod ${S.chat.off ? 'OFF' : 'on'}; compaction after a pause ${S.cfg.compaction.onReturn ? 'on (setting)' : S.chat.idle ? 'on (this chat)' : 'off'}; ${fableLine()}.`;
+  // This chat's own Fable mode, whatever the settings say: fable, fable:<effort>, default; auto follows the settings again.
+  const fable = which === 'chat' ? parseChatFable(arg) : undefined;
+  if (fable !== undefined) {
+    const { fable: _was, ...rest } = S.chat;
+    S.chat = fable === 'auto' ? rest : { ...rest, fable };
+    applyChatFable();
+    await saveChat($);
+    await ledger($, {
+      kind: 'chat',
+      text: `/jevg chat ${arg}`,
+      reasons: [`chat ${S.chat.off ? 'off' : 'on'}, idle ${S.chat.idle ? 'on' : 'off'}, fable ${S.chat.fable ? (S.chat.fable.on ? `on${S.chat.fable.maxEffort ? ` (up to ${S.chat.fable.maxEffort})` : ''}` : 'off') : 'as in the settings'}`],
+    });
+    const next = S.chat.off ? ' The mod is off in this chat: it applies after /jevg chat on.' : ' It applies from the next turn; the first turn on another model rewrites the prompt cache once.';
+    return `${show()}${next}`;
+  }
+  if (arg !== 'on' && arg !== 'off') {
+    return `${show()}\nUsage: /jevg ${which} on|off${which === 'chat' ? ' | fable | fable:<low|medium|high|xhigh|max> | default | auto' : ''}`;
+  }
   const on = arg === 'on';
   if (which === 'chat') {
     S.chat = { ...S.chat, off: !on };
@@ -2585,11 +2622,14 @@ async function statusReport($: EngineInterface): Promise<string> {
   const prev = S.route.previous;
   const lines = [
     `jev-governor ${cfg.enabled ? (S.chat.off ? 'OFF in this chat (/jevg chat on)' : `ON (${shadow() ? L('наблюдение', 'shadow') : 'active'})`) : 'OFF'} · key ${S.key ? 'found' : 'MISSING'} · Jev ${cfg.jev.model}${isExcluded(cfg, S.cwd, S.home) ? L(' · проект исключён: к Jev ничего не уходит', ' · project excluded: nothing is sent to Jev') : ''}`,
+    ...(S.chat.fable && !S.chat.fable.on && S.fileFable.enabled
+      ? [L('режим Fable выключен в этом чате (/jevg chat auto — как в настройках)', 'Fable mode is off in this chat (/jevg chat auto follows the settings)')]
+      : []),
     ...(cfg.fable.enabled
       ? [
           L(
-            `режим ${modelLabel(cfg.fable.model)}: всё идёт на ${cfg.fable.model}, Jev выбирает только усилие (не выше ${cfg.fable.maxEffort})`,
-            `${modelLabel(cfg.fable.model)} mode: everything runs on ${cfg.fable.model}, Jev picks only the effort (at most ${cfg.fable.maxEffort})`,
+            `режим Fable: всё идёт на ${modelLabel(cfg.fable.model)} (${cfg.fable.model}), Jev выбирает только усилие (не выше ${cfg.fable.maxEffort})${S.chat.fable ? ' — выбор этого чата' : ''}`,
+            `Fable mode: everything runs on ${modelLabel(cfg.fable.model)} (${cfg.fable.model}), Jev picks only the effort (at most ${cfg.fable.maxEffort})${S.chat.fable ? ' — this chat\'s own choice' : ''}`,
           ),
         ]
       : []),
@@ -2598,8 +2638,8 @@ async function statusReport($: EngineInterface): Promise<string> {
     `${registryLine()} (/jevg agents)`,
     `data: ${S.data}`,
     L(
-      'commands: /jevg status | on | off | chat on|off | idle on|off | ui | reload | fresh [--brief|--nobrief] [фокус] | getctx [--brief|--nobrief] [фокус] | ctx [list|<id>]',
-      'commands: /jevg status | on | off | chat on|off | idle on|off | ui | reload | fresh [--brief|--nobrief] [focus] | getctx [--brief|--nobrief] [focus] | ctx [list|<id>]',
+      'commands: /jevg status | on | off | chat on|off|fable[:effort]|default|auto | idle on|off | ui | reload | fresh [--brief|--nobrief] [фокус] | getctx [--brief|--nobrief] [фокус] | ctx [list|<id>]',
+      'commands: /jevg status | on | off | chat on|off|fable[:effort]|default|auto | idle on|off | ui | reload | fresh [--brief|--nobrief] [focus] | getctx [--brief|--nobrief] [focus] | ctx [list|<id>]',
     ),
   ];
   return lines.join('\n');
@@ -2640,12 +2680,12 @@ async function bindSession($: EngineInterface, starting: boolean): Promise<void>
     await $.command.register({
       name: 'jevg',
       description: L(
-        'jev-governor: status, on, off, chat on|off (this chat only), idle on|off (compact after a pause in this chat), agents [merge], ui, reload; fresh — продолжить в этом окне с чистым чатом и капсулой; getctx — капсула для нового чата, ctx — подключить её',
-        'jev-governor: status, on, off, chat on|off (this chat only), idle on|off (compact after a pause in this chat), agents [merge], ui, reload; fresh — continue in this window with a clean chat and a capsule; getctx — a capsule for a new chat; ctx — attach it',
+        'jev-governor: status, on, off, chat on|off (this chat only), chat fable[:effort]|default|auto (Fable mode in this chat), idle on|off (compact after a pause in this chat), agents [merge], ui, reload; fresh — продолжить в этом окне с чистым чатом и капсулой; getctx — капсула для нового чата, ctx — подключить её',
+        'jev-governor: status, on, off, chat on|off (this chat only), chat fable[:effort]|default|auto (Fable mode in this chat), idle on|off (compact after a pause in this chat), agents [merge], ui, reload; fresh — continue in this window with a clean chat and a capsule; getctx — a capsule for a new chat; ctx — attach it',
       ),
       argumentHint: L(
-        '[status|on|off|chat on|off|idle on|off|agents [merge]|ui|reload|fresh [фокус]|getctx [фокус]|ctx [list|id]]',
-        '[status|on|off|chat on|off|idle on|off|agents [merge]|ui|reload|fresh [focus]|getctx [focus]|ctx [list|id]]',
+        '[status|on|off|chat on|off|fable[:effort]|default|auto|idle on|off|agents [merge]|ui|reload|fresh [фокус]|getctx [фокус]|ctx [list|id]]',
+        '[status|on|off|chat on|off|fable[:effort]|default|auto|idle on|off|agents [merge]|ui|reload|fresh [focus]|getctx [focus]|ctx [list|id]]',
       ),
     });
     $.clock.every(8000, () => {
@@ -2690,6 +2730,7 @@ function resetConversation(): void {
   S.handoff = undefined;
   S.route = { freeSwitch: true };
   S.chat = { off: false, idle: false };
+  applyChatFable();
   S.turn = undefined;
   S.subs.clear();
   S.pending = [];

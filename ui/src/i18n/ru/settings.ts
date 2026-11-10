@@ -23,17 +23,20 @@ export default {
   'One path per line. In these projects the mod sends nothing to Jev (OpenRouter): no model and effort choice, no compaction or trimming through Jev, no turn selection for the capsule. For third-party or work code. In other projects secrets (keys, tokens, passwords) are replaced with [secret] before sending anyway, but code and paths go out as they are.':
     'По одному пути на строку. В этих проектах мод ничего не отправляет в Jev (OpenRouter): нет выбора модели и effort, нет сжатия и обрезки через Jev, нет отбора ходов для капсулы. Для чужого или рабочего кода. В остальных проектах секреты (ключи, токены, пароли) и так заменяются на [secret] перед отправкой, но код и пути уходят как есть.',
   'Codex is coming in the next version.': 'Codex — в следующей версии.',
-  '{model} mode': 'Режим {model}',
+  'Fable mode': 'Режим Fable',
   on: 'включён',
   'Everything runs on {model}: the main chat and every subagent. Jev no longer chooses between models and picks only the effort for each task and agent. Sonnet/Opus switching, the light model and roles rest while the mode is on; compaction, trimming and memory work as before.':
     'Всё идёт на {model}: основной диалог и каждый субагент. Jev больше не выбирает между моделями, а подбирает только усилие (effort) для каждой задачи и агента. Переключение Sonnet/Opus, лёгкая модель и роли отдыхают, пока режим включён; сжатие, обрезка и память работают как раньше.',
-  'effort bounds and the model id': 'границы усилия и идентификатор модели',
-  '{model} mode is on. The mod will pick it up on the next turn.': 'Режим {model} включён. Мод подхватит его со следующего хода.',
-  '{model} mode is off. The mod chooses between the models again.': 'Режим {model} выключен. Мод снова выбирает между моделями.',
+  'Other effort bounds and another model id': 'Другие границы усилия и другой идентификатор модели',
+  'Fable mode is on: everything runs on {model}. The mod will pick it up on the next turn.': 'Режим Fable включён: всё идёт на {model}. Мод подхватит его со следующего хода.',
+  'Fable mode is off. The mod chooses between the models again.': 'Режим Fable выключен. Мод снова выбирает между моделями.',
   'Maximum effort in this mode': 'Максимальное усилие в этом режиме',
   'No request goes above this level while the mode is on: not Jev’s choice, not the raise after tool errors, not a specialist’s own effort, not the effort set in the chat. “max” sets no limit.':
     'Пока режим включён, ни один запрос не идёт выше этого уровня: ни выбор Jev, ни повышение после ошибок инструментов, ни собственное усилие специалиста, ни усилие, заданное в чате. «max» — без ограничения.',
-  'Maximum effort in {model} mode: {effort}.': 'Максимальное усилие в режиме {model}: {effort}.',
+  'Maximum effort in Fable mode: {effort}.': 'Максимальное усилие в режиме Fable: {effort}.',
+  'Fable mode model: {model}.': 'Модель режима Fable: {model}.',
+  'The Fable version the mode runs on. “/jevg chat fable” takes it from here too, also while the switch is off.':
+    'Версия Fable, на которой работает режим. Команда «/jevg chat fable» тоже берёт её отсюда, даже когда переключатель выключен.',
   'Fable mode model': 'Модель режима Fable',
   'The one model everything runs on while Fable mode is on (the switch at the top of Settings). The tiers above are not used then; the effort bounds below still apply.':
     'Единственная модель, на которой всё идёт, пока включён режим Fable (переключатель вверху настроек). Уровни выше тогда не используются; границы усилия ниже действуют по-прежнему.',

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveConfig } from '../hooks/lib/config.ts';
+import { parseChatFable, readChatFable, resolveConfig, withChatFable } from '../hooks/lib/config.ts';
 import { modelLabel } from '../hooks/lib/providers.ts';
 import { addStepUsage, archiveOf, learnTurn, noteToolResult, S, stepKey, turnUsageParts } from '../hooks/mod/state.ts';
 import {
@@ -301,6 +301,40 @@ describe('Fable mode', () => {
     expect(reader.light).toBeUndefined();
     const pinned = decideSubagent(signals({ effortExpected: 3, effortOnly: true }), { pressure: 0, subagentType: 'jev-governor:x', pinnedTier: 'standard', pinnedEffort: 'low' }, fable);
     expect(pinned).toMatchObject({ tier: 'standard', effort: 'low' });
+  });
+});
+
+describe('a chat\'s own Fable mode (/jevg chat …)', () => {
+  it('reads fable, fable:<effort>, default and auto, and nothing else', () => {
+    expect(parseChatFable('fable')).toEqual({ on: true });
+    expect(parseChatFable('fable:max')).toEqual({ on: true, maxEffort: 'max' });
+    expect(parseChatFable(' Fable:High ')).toEqual({ on: true, maxEffort: 'high' });
+    expect(parseChatFable('fable low')).toEqual({ on: true, maxEffort: 'low' });
+    expect(parseChatFable('default')).toEqual({ on: false });
+    expect(parseChatFable('auto')).toBe('auto');
+    for (const bad of ['fable:huge', 'fable:', 'fables', 'on', 'off', '']) expect([bad, parseChatFable(bad)]).toEqual([bad, undefined]);
+  });
+
+  it('goes over the settings whatever they say, and leaves them alone without a choice', () => {
+    const off = resolveConfig({ fable: { maxEffort: 'high' } });
+    const on = resolveConfig({ fable: { enabled: true, maxEffort: 'high' } });
+    expect(withChatFable(off, undefined)).toBe(off);
+    expect(withChatFable(off, { on: true }).fable).toEqual({ enabled: true, model: 'claude-fable-5-2', maxEffort: 'high' });
+    expect(withChatFable(off, { on: true, maxEffort: 'max' }).fable.maxEffort).toBe('max');
+    expect(withChatFable(on, { on: false }).fable).toEqual({ enabled: false, model: 'claude-fable-5-2', maxEffort: 'high' });
+    // Only the fable block differs; the given settings are not changed.
+    expect(withChatFable(off, { on: true }).router).toBe(off.router);
+    expect(off.fable.enabled).toBe(false);
+    expect(fixedModel(withChatFable(off, { on: true }))).toBe('claude-fable-5-2');
+    expect(fixedModel(withChatFable(on, { on: false }))).toBeUndefined();
+  });
+
+  it('reads a stored choice back and drops a malformed one', () => {
+    expect(readChatFable({ on: true, maxEffort: 'xhigh' })).toEqual({ on: true, maxEffort: 'xhigh' });
+    expect(readChatFable({ on: false, maxEffort: 'xhigh' })).toEqual({ on: false });
+    expect(readChatFable({ on: true, maxEffort: 'huge' })).toEqual({ on: true });
+    expect(readChatFable({ on: 'yes' })).toBeUndefined();
+    expect(readChatFable(undefined)).toBeUndefined();
   });
 });
 

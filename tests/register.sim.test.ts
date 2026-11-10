@@ -1353,6 +1353,82 @@ describe('jev-governor hooks against a fake engine', () => {
     }
   });
 
+  it('/jevg chat fable | fable:<effort> | default | auto: the chat\'s own Fable mode over the settings, remembered for it, never written to the file', async () => {
+    const before = files.get(`${DATA}/config.json`)!;
+    const fileFable = (): { enabled?: boolean; maxEffort?: string } => JSON.parse(files.get(`${DATA}/config.json`)!).fable ?? {};
+    const cmd = async (args: string): Promise<string> => (await emit('command.run', { command: 'jevg', args }, async () => ({ text: '' }))).text;
+    const turn = async (id: string, text: string): Promise<{ model: string; effort: unknown }> => {
+      await emit('turn.start', { turnId: id, text });
+      let seen = { model: '', effort: undefined as unknown };
+      const it = handlers.get('turn.step')![0]!($, { turnId: id, model: sessionModel, effort: 'xhigh' }, async function* (x: any) {
+        seen = { model: x.model, effort: x.effort };
+        yield x;
+      });
+      for await (const _ of it as AsyncIterable<unknown>) {
+        // drain
+      }
+      return seen;
+    };
+    const tierBefore = jevTier;
+    const scoreBefore = jevEffortScore;
+    try {
+      // The setting is off: this chat routes between the tiers.
+      expect(fileFable().enabled).not.toBe(true);
+      await startSession('chat-fable-session');
+      messages = oldChat();
+      jevTier = 'standard';
+      jevEffortScore = 4;
+      expect((await turn('c1', 'переименуй переменную в одном файле')).model).not.toBe('claude-fable-5-2');
+      // fable: the mode is on here, with the settings' maximum effort.
+      expect(await cmd('chat fable')).toContain('ON in this chat');
+      expect(await turn('c2', 'разберись с утечкой памяти в воркере очереди')).toEqual({ model: 'claude-fable-5-2', effort: 'max' });
+      // fable:<effort>: with the chat's own maximum.
+      expect(await cmd('chat fable:high')).toContain('effort up to high');
+      expect(await turn('c3', 'найди причину гонки в планировщике задач')).toEqual({ model: 'claude-fable-5-2', effort: 'high' });
+      expect(await cmd('chat fable:huge')).toContain('Usage: /jevg chat');
+      expect(await cmd('status')).toMatch(/at most high|не выше high/);
+      // The file keeps its own setting, also when another command saves the config from this chat.
+      await cmd('off');
+      await cmd('on');
+      expect(fileFable()).toMatchObject({ enabled: false, maxEffort: 'max' });
+      expect((await turn('c4', 'добавь проверку входных данных в обработчик')).model).toBe('claude-fable-5-2');
+      // Remembered for the chat across a restart; another chat follows the settings.
+      await startSession('chat-fable-session');
+      expect(await turn('c5', 'обнови тесты для обработчика')).toEqual({ model: 'claude-fable-5-2', effort: 'high' });
+      await startSession('chat-fable-other');
+      expect((await turn('c6', 'переименуй переменную в одном файле')).model).not.toBe('claude-fable-5-2');
+      // default: off here though the setting is on; auto: the chat follows the settings again.
+      const on = JSON.parse(files.get(`${DATA}/config.json`)!);
+      on.fable = { ...on.fable, enabled: true };
+      files.set(`${DATA}/config.json`, JSON.stringify(on));
+      await startSession('chat-fable-session');
+      expect(await cmd('chat default')).toContain('OFF in this chat (on in the settings)');
+      expect((await turn('c7', 'поправь опечатку в комментарии')).model).not.toBe('claude-fable-5-2');
+      expect(await cmd('status')).toMatch(/mode is off in this chat|выключен в этом чате/);
+      expect(fileFable().enabled).toBe(true);
+      expect(await cmd('chat auto')).toContain('as in the settings (on');
+      expect((await turn('c8', 'поправь ещё одну опечатку')).model).toBe('claude-fable-5-2');
+      // The model is the settings' field, also while the mode is off there: another Fable version.
+      const other = JSON.parse(files.get(`${DATA}/config.json`)!);
+      other.fable = { ...other.fable, enabled: false, model: 'claude-fable-5-1' };
+      files.set(`${DATA}/config.json`, JSON.stringify(other));
+      await startSession('chat-fable-model');
+      expect((await turn('c9', 'переименуй переменную в одном файле')).model).not.toMatch(/fable/);
+      expect(await cmd('chat fable')).toContain('ON in this chat on Fable 5.1');
+      expect((await turn('c10', 'добавь проверку входных данных в обработчик')).model).toBe('claude-fable-5-1');
+      other.fable.model = 'claude-fable-5';
+      files.set(`${DATA}/config.json`, JSON.stringify(other));
+      await cmd('reload');
+      expect((await turn('c11', 'обнови тесты для обработчика')).model).toBe('claude-fable-5');
+      expect(fileFable().enabled).toBe(false);
+    } finally {
+      jevTier = tierBefore;
+      jevEffortScore = scoreBefore;
+      files.set(`${DATA}/config.json`, before);
+      await startSession('chat-fable-cleanup');
+    }
+  });
+
   it('a background merge runs when a specialist was drafted since the last pass, once per interval', async () => {
     for (const name of [...files.keys()].filter((p) => p.startsWith(`${DATA}/agents/`))) files.delete(name);
     files.delete(`${DATA}/merge-auto.json`);

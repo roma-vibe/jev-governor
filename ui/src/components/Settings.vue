@@ -133,9 +133,16 @@ function discard(): void {
   if (store.config) sync(store.config);
 }
 
-/** "Fable 5.2" from the model id of the mode, so the card follows a new version set in Models. */
+/** "Fable 5.2" from the model id of the mode. */
 const fableName = computed(() => modelLabel(store.config?.fable.model ?? ''));
 const fableSaving = ref(false);
+/** The Fable versions the card offers; an id set by hand in Models stays visible and selectable. */
+const FABLE_MODELS = ['claude-fable-5', 'claude-fable-5-1', 'claude-fable-5-2'];
+const fableModels = computed(() => {
+  const current = store.config?.fable.model ?? '';
+  const ids = current && !FABLE_MODELS.includes(current) ? [current, ...FABLE_MODELS] : FABLE_MODELS;
+  return ids.map((id) => ({ value: id, label: modelLabel(id) }));
+});
 
 /** The mode's card saves at once, like the “On” badge; unsaved edits of other settings stay as they are. */
 async function saveFable(patch: Partial<GovernorConfig['fable']>): Promise<GovernorConfig | undefined> {
@@ -166,14 +173,19 @@ async function toggleFable(on: boolean): Promise<void> {
   if (!saved) return;
   notify(
     saved.fable.enabled
-      ? t('{model} mode is on. The mod will pick it up on the next turn.', { model: fableName.value })
-      : t('{model} mode is off. The mod chooses between the models again.', { model: fableName.value }),
+      ? t('Fable mode is on: everything runs on {model}. The mod will pick it up on the next turn.', { model: fableName.value })
+      : t('Fable mode is off. The mod chooses between the models again.'),
   );
 }
 
 async function setFableMaxEffort(value: string): Promise<void> {
   const saved = await saveFable({ maxEffort: value as GovernorConfig['fable']['maxEffort'] });
-  if (saved) notify(t('Maximum effort in {model} mode: {effort}.', { model: fableName.value, effort: saved.fable.maxEffort }));
+  if (saved) notify(t('Maximum effort in Fable mode: {effort}.', { effort: saved.fable.maxEffort }));
+}
+
+async function setFableModel(value: string): Promise<void> {
+  const saved = await saveFable({ model: value });
+  if (saved) notify(t('Fable mode model: {model}.', { model: modelLabel(saved.fable.model) }));
 }
 
 /** Options of a select; a value stored by hand that is not offered stays visible and selectable. */
@@ -198,7 +210,7 @@ const stacked = (field: FieldDef): boolean => field.kind === 'text' || field.kin
     >
       <div class="min-w-0 flex-1">
         <div class="flex flex-wrap items-center gap-2">
-          <h2 class="text-base font-semibold">{{ t('{model} mode', { model: fableName }) }}</h2>
+          <h2 class="text-base font-semibold">{{ t('Fable mode') }}</h2>
           <span v-if="store.config.fable.enabled" class="badge badge-indigo">{{ t('on') }}</span>
         </div>
         <p class="help">
@@ -209,12 +221,21 @@ const stacked = (field: FieldDef): boolean => field.kind === 'text' || field.kin
             )
           }}
         </p>
-        <p class="help">
-          {{ t('Model') }}: <code class="mono">{{ store.config.fable.model }}</code> ·
-          <a href="#/settings/models" class="text-indigo-600 hover:underline dark:text-indigo-400" @click.prevent="go('/settings/models')">{{
-            t('effort bounds and the model id')
-          }}</a>
-        </p>
+        <div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <label class="label" for="f-fable-model">{{ t('Model') }}</label>
+          <select
+            id="f-fable-model"
+            class="input !w-32"
+            :disabled="fableSaving"
+            :value="store.config.fable.model"
+            @change="setFableModel(($event.target as HTMLSelectElement).value)"
+          >
+            <option v-for="o in fableModels" :key="o.value" :value="o.value">{{ o.label }}</option>
+          </select>
+          <p class="help !mt-0 basis-full">
+            {{ t('The Fable version the mode runs on. “/jevg chat fable” takes it from here too, also while the switch is off.') }}
+          </p>
+        </div>
         <div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1">
           <label class="label" for="f-fable-max-effort">{{ t('Maximum effort in this mode') }}</label>
           <select
@@ -230,11 +251,16 @@ const stacked = (field: FieldDef): boolean => field.kind === 'text' || field.kin
             {{ t('No request goes above this level while the mode is on: not Jev’s choice, not the raise after tool errors, not a specialist’s own effort, not the effort set in the chat. “max” sets no limit.') }}
           </p>
         </div>
+        <p class="help mt-3">
+          <a href="#/settings/models" class="text-indigo-600 hover:underline dark:text-indigo-400" @click.prevent="go('/settings/models')">{{
+            t('Other effort bounds and another model id')
+          }}</a>
+        </p>
       </div>
       <Toggle
         :model-value="store.config.fable.enabled"
         :disabled="fableSaving"
-        :label="t('{model} mode', { model: fableName })"
+        :label="t('Fable mode')"
         @update:model-value="toggleFable"
       />
     </section>

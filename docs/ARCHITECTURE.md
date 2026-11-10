@@ -86,7 +86,8 @@ setup` starts it by command; `agents.setup: false` turns the whole thing off.
 
 One model for everything, Jev picks only the effort. With the switch at the top of the settings
 page on, every step of the main chat and of every subagent runs on `fable.model`
-(`claude-fable-5-2`), set in `turn.step` and at `agent.spawn`:
+(`claude-fable-5-2` by default; the card's dropdown offers Fable 5, 5.1 and 5.2), set in
+`turn.step` and at `agent.spawn`:
 
 - Jev is asked `effort`, `risky` (and, for the main chat, `continuation`, `new_topic`,
   `correction`), not `tier_a`/`tier_b`. The effort is chosen as before: Jev's score, the risk
@@ -110,6 +111,14 @@ One model is one prompt cache, so the cache is rewritten once, on the turn the m
 on (or off) in a running chat; that turn's ledger entry has `switched` and `rewrite`. Ledger
 entries of the mode carry no `pStrong` and the reason `Fable mode: model fixed, effort only`.
 `pathOverrides` can switch it per folder (`{"set":{"fable":{"enabled":true}}}`).
+
+A chat can choose for itself, whatever the settings say: `/jevg chat fable` (on, on the settings'
+`fable.model` — also while the mode is off there — and with their maximum effort), `/jevg chat fable:<effort>` (on, with the chat's own maximum, e.g. `fable:max`),
+`/jevg chat default` (off, as if the setting were off), `/jevg chat auto` (the settings again).
+The choice is kept with the chat's other switches in the engine store (`chat:<session>`), so it
+survives a restart or resume and ends with the conversation. It is laid over the resolved
+settings (`withChatFable`, `S.cfg.fable`); what the mod writes to `config.json` always carries
+the file's own `fable` block (`S.fileFable`), never a chat's.
 
 Verified against the engine (2.1.286): a spawn can only be rewritten to an
 agent type that was offered to the model when the turn began; a hidden or

@@ -148,8 +148,9 @@ and `-grader-2`), and Jev's vote then split between them. Now:
 - `subagent` also carries `light: true` when the task qualified for the light model
   (read-only, not risky, P(strong) below `router.lightBelow`, effort `high` or less; before 0.3.5 `medium`) and
   `lightApplied` (whether it ran there: `router.lightSubagents` `on` or `shadow`).
-- `chat` — `/jevg chat on|off` or `/jevg idle on|off` in a chat (`text`, `reasons` give the state after).
-  The switches themselves live in the engine store under `chat:<session>` (`off`, `idle`).
+- `chat` — `/jevg chat on|off`, `/jevg chat fable|fable:<effort>|default|auto` or `/jevg idle on|off` in a chat
+  (`text`, `reasons` give the state after). The switches themselves live in the engine store under
+  `chat:<session>` (`off`, `idle`, and `fable`: `{ on, maxEffort? }` when the chat made its own choice).
 - `light-up` — a light subagent moved to the standard model after
   `router.lightMaxSteps` steps or failed tool calls (`reasons` says which).
 - `rerun-after-prune` — after a compaction the model ran a pruned command or

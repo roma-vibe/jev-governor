@@ -1,4 +1,4 @@
-import { EFFORTS, type Effort, type GovernorConfig, type PathOverride } from './types.ts';
+import { EFFORTS, type ChatFable, type Effort, type GovernorConfig, type PathOverride } from './types.ts';
 
 export const DEFAULT_CONFIG: GovernorConfig = {
   version: 1,
@@ -442,6 +442,34 @@ export function resolveConfig(raw: unknown): GovernorConfig {
     },
     codex: { enabled: bool(codex.enabled, d.codex.enabled) },
   };
+}
+
+/**
+ * What `/jevg chat <arg>` says about Fable mode in this chat: `fable` (on, the settings' maximum
+ * effort), `fable:<effort>` (on, with that maximum), `default` (off, as if the setting were off),
+ * `auto` (the chat follows the settings again). Undefined for anything else.
+ */
+export function parseChatFable(arg: string): ChatFable | 'auto' | undefined {
+  const a = arg.trim().toLowerCase();
+  if (a === 'auto') return 'auto';
+  if (a === 'default') return { on: false };
+  const m = /^fable(?:\s*[:\s]\s*([a-z]+))?$/.exec(a);
+  if (!m) return undefined;
+  if (m[1] === undefined) return { on: true };
+  return (EFFORTS as readonly string[]).includes(m[1]) ? { on: true, maxEffort: m[1] as Effort } : undefined;
+}
+
+/** A chat's choice read back from the engine store; anything malformed is no choice. */
+export function readChatFable(value: unknown): ChatFable | undefined {
+  if (!isObject(value) || typeof value.on !== 'boolean') return undefined;
+  const max = value.on && typeof value.maxEffort === 'string' && (EFFORTS as readonly string[]).includes(value.maxEffort) ? (value.maxEffort as Effort) : undefined;
+  return { on: value.on, ...(max ? { maxEffort: max } : {}) };
+}
+
+/** The settings as one chat sees them: its own Fable choice, when it made one, replaces the file's. */
+export function withChatFable(config: GovernorConfig, chat: ChatFable | undefined): GovernorConfig {
+  if (!chat) return config;
+  return { ...config, fable: { ...config.fable, enabled: chat.on, ...(chat.on && chat.maxEffort ? { maxEffort: chat.maxEffort } : {}) } };
 }
 
 /** `cwd` is `path` or inside it (`~` expanded). */

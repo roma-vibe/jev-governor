@@ -10,6 +10,12 @@ export type Tier = 'standard' | 'strong';
 
 export type PathOverride = { path: string; set: Record<string, unknown> };
 
+/**
+ * A chat's own Fable choice, over the settings whatever they say (`/jevg chat fable`, `fable:<effort>`,
+ * `default`): the mode on, with its own maximum effort when one is given, or off as if the setting were.
+ */
+export type ChatFable = { on: boolean; maxEffort?: Effort };
+
 export type GovernorConfig = {
   version: 1;
   /** Master switch: off, the mod changes nothing. */
