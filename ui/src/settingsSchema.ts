@@ -91,6 +91,12 @@ export function getSections(): Section[] {
           help: t('Model for tasks where Sonnet 5.5 is enough. Uses up subscription limits noticeably slower than Opus.'),
         },
         {
+          path: 'router.mainDowngrade',
+          label: t('Move the main chat to Sonnet'),
+          kind: 'bool',
+          help: t('On: where Jev finds a task easy and the switch pays in dollars, the main chat moves from Opus down to Sonnet. Off (the default): the mod never moves the main chat down, because answers on Sonnet were corrected about twice as often as on Opus for equally easy tasks. A chat you started on Sonnet yourself stays on it and still moves up to Opus for hard tasks. Subagents are not affected: they are still given Sonnet for easy tasks.'),
+        },
+        {
           path: 'models.strong',
           label: t('Strong tier (Opus)'),
           kind: 'text',
@@ -123,7 +129,7 @@ export function getSections(): Section[] {
           path: 'router.mainModel',
           label: t('Choose the main chat model'),
           kind: 'bool',
-          help: t('Jev decides on every turn whether to use Sonnet or Opus. When off, the model stays the one you chose yourself.'),
+          help: t('Jev decides on every turn whether the chat needs Opus. Moving down to Sonnet is a separate switch, “Move the main chat to Sonnet” under Models. When off, the model stays the one you chose yourself.'),
         },
         {
           path: 'router.mainEffort',
@@ -147,7 +153,7 @@ export function getSections(): Section[] {
           path: 'router.downgradeAt',
           label: t('Threshold for returning to Sonnet'),
           ...prob,
-          help: t('The probability that Sonnet is enough at which the chat returns from Opus to Sonnet (where that is cheap). A higher threshold is more cautious: you stay on Opus longer and spend more.'),
+          help: t('The probability that Sonnet is enough at which the chat returns from Opus to Sonnet (where that is cheap). A higher threshold is more cautious: you stay on Opus longer and spend more. Works only while “Move the main chat to Sonnet” (under Models) is on.'),
         },
         {
           path: 'router.cheapSwitchTokens',

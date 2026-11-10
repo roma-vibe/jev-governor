@@ -36,7 +36,9 @@ const seedConfig = (language: 'ru' | 'en'): void => {
   const cfg = resolveConfig(had ? JSON.parse(files.get(`${DATA}/config.json`)!) : undefined);
   // The memory is on by default; the sim keeps it off outside its own tests, which switch it on.
   const memory = had ? cfg.memory : { ...cfg.memory, enabled: false };
-  files.set(`${DATA}/config.json`, `${JSON.stringify({ ...cfg, memory, ui: { ...cfg.ui, language } }, null, 2)}\n`);
+  // The main chat's move down to Sonnet is off by default; the sim has it on, as its turns expect.
+  const router = had ? cfg.router : { ...cfg.router, mainDowngrade: true };
+  files.set(`${DATA}/config.json`, `${JSON.stringify({ ...cfg, memory, router, ui: { ...cfg.ui, language } }, null, 2)}\n`);
 };
 seedConfig('ru');
 /** Sets one handoff option in the sim's config file (read again at the next turn or command). */

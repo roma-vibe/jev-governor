@@ -64,6 +64,14 @@ export type GovernorConfig = {
   router: {
     /** Choose the main conversation's model (only where the prompt cache allows). */
     mainModel: boolean;
+    /**
+     * Move the main conversation from the strong model down to the standard one where that pays.
+     * Off by default (0.3.18): in a month of use the answers given on Sonnet to tasks Jev judged
+     * easy were corrected twice as often as Opus's, which ate what the cheaper output saved. Off,
+     * a chat that is on the standard model by the person's own choice still moves up to the strong
+     * one; subagents are not affected.
+     */
+    mainDowngrade: boolean;
     /** Choose the main conversation's effort every turn (cache-safe on Opus/Sonnet 5.5). */
     mainEffort: boolean;
     /** Choose model and effort for every subagent at spawn. */

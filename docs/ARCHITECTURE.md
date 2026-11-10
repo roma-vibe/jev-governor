@@ -13,7 +13,7 @@ no token handling (the hooks API cannot read the OAuth session at all).
 | Where | Lever | When | Why there |
 |---|---|---|---|
 | Main conversation | effort (`low`…`max`) | every turn | Changing effort keeps the prompt cache on Opus 5.5 / Sonnet 5.5 |
-| Main conversation | model (Sonnet 5.5 ↔ Opus 5.5) | to Sonnet where it pays in dollars: the re-write of the context on Sonnet's cache against what Sonnet saves on output and new cache writes over `expectedTurns` turns; to Opus where the cache is cold or the context small, a confident upgrade (P ≥ 0.8) always | Each model has its own cache; cache reads cost the same on both, so only output and writes differ |
+| Main conversation | model (Sonnet 5.5 ↔ Opus 5.5) | to Sonnet only with `router.mainDowngrade` on (off by default), and then where it pays in dollars: the re-write of the context on Sonnet's cache against what Sonnet saves on output and new cache writes over `expectedTurns` turns; to Opus where the cache is cold or the context small, a confident upgrade (P ≥ 0.8) always | Each model has its own cache; cache reads cost the same on both, so only output and writes differ |
 | In-turn | effort +1 per N failed tool calls (max +2) | during a turn | Evidence beats prediction; cache-safe |
 | Subagents | model + effort | at spawn | A subagent starts with an empty context: switching costs nothing |
 | Subagents | brief template in the Agent tool description, scope note on the task, brief judged by Jev (shadow/on), model by role (`router.roles`) | at spawn | Cost is context over steps, not model price; narrow workers (~100 steps) on complete briefs stay small. Refusal of a too-big or too-thin task happens once per task |
@@ -49,7 +49,8 @@ turn.complete ─► usage → ledger; maybe trigger compaction
   pressure (2 → `high`, 3 → `medium`); `risky` lifts it to at least `high`;
 - on Sonnet: upgrade if P(opus) ≥ `forceUpgradeAt` (or risky), or ≥
   `upgradeAt` where the switch is free/cheap;
-- on Opus: downgrade only where it pays (`switchEconomics`: the cache
+- on Opus: no downgrade unless `router.mainDowngrade` is on (off by default,
+  0.3.18; the reason says so); with it on, downgrade only where it pays (`switchEconomics`: the cache
   re-write against the per-turn gain × `expectedTurns`, the turn profile
   learned from the session), P(sonnet) ≥ `downgradeAt`, the context fits
   Sonnet, and the task is not risky; under critical pressure P(sonnet) ≥ 0.5

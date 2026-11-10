@@ -2,7 +2,7 @@
 
 [English](README.md) · [Русский](README.ru.md)
 
-![version](https://img.shields.io/badge/version-0.3.17-blue)
+![version](https://img.shields.io/badge/version-0.3.18-blue)
 ![Claude Code](https://img.shields.io/badge/Claude_Code-%E2%89%A5%202.1.287-D97757)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![ToS](https://img.shields.io/badge/ToS-white%20zone%20only-brightgreen)
@@ -20,7 +20,7 @@ Mods shipped in Claude Code 2.1.287. This one uses only that official mechanism:
 
 ## What it does
 
-- **Model and effort per turn.** Effort (`low`…`max`) is picked on every turn. Switching to Sonnet 5.5 is priced in dollars: rewriting the context into the other model's cache against what Sonnet saves on output over the next turns (cache reads cost the same on both). Short continuations ("yes", "go on") are decided locally, without asking Jev.
+- **Model and effort per turn.** Effort (`low`…`max`) is picked on every turn. The main chat moves up to Opus 5.5 when a task needs it. Moving it down to Sonnet 5.5 is off by default since 0.3.18 (`router.mainDowngrade`, the switch under Models in the settings): over a month, answers on Sonnet to equally easy tasks were corrected about twice as often as on Opus. Switched on, the move is priced in dollars: rewriting the context into the other model's cache against what Sonnet saves on output over the next turns (cache reads cost the same on both). Short continuations ("yes", "go on") are decided locally, without asking Jev.
 - **Subagents.** Model and effort are chosen per task at spawn. Read-only subagents with an easy task run on Haiku 5.5 (a twentieth of Sonnet's price under a 100K-token prompt, a quarter above) and move up to Sonnet when the task grows or tools keep failing. Generic subagents get the role of a matching specialist; if none exists, one is created (short English prompt and skills, drafted by Sonnet 5.5). Near-copies are not drafted, and existing ones are folded into one once a day in the background, or now with `/jevg agents merge` (or the UI button).
 - **Your choice of agent model.** A model named in the Agent call is kept; only the effort is chosen. Say "set up the agents" and every spawn first asks you which agent it is, what for and on which model, with a recommendation (`/jevg agents setup off` ends it).
 - **Fable mode (optional, `fable.enabled`).** One switch at the top of the settings page: every turn and every subagent runs on Fable (5.2 by default; 5 or 5.1 can be chosen on the same card), and Jev picks only the effort for each task and agent. Nothing switches the model, so the chat keeps one prompt cache; the Sonnet/Opus tiers, the light model and roles rest while it is on. A dropdown on the same card sets the highest effort the mode may use (`fable.maxEffort`). Compaction, trimming and memory work as before.

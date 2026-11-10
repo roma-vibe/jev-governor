@@ -352,6 +352,9 @@ export function decideMain(signals: Signals, ctx: MainContext, config: GovernorC
         reasons.push(`upgrade: P(opus)=${signals.pStrong.toFixed(2)} (${where})`);
       }
     }
+  } else if (!r.mainDowngrade) {
+    // Not even under a critical budget: the switch is the person's, and it says no.
+    reasons.push('kept opus: moving the main chat to sonnet is off');
   } else {
     const pStandard = 1 - signals.pStrong;
     const down = DOWNGRADE_BONUS[ctx.pressure];

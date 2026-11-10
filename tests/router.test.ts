@@ -21,7 +21,8 @@ import {
   type Signals,
 } from '../hooks/lib/router.ts';
 
-const cfg = resolveConfig(undefined);
+/** The defaults, with the main chat's move down to Sonnet switched on (off by default since 0.3.18). */
+const cfg = resolveConfig({ router: { mainDowngrade: true } });
 
 function signals(over: Partial<Signals> = {}): Signals {
   return { pStrong: 0.5, effortExpected: 1, effortConfidence: 0.9, risky: 0, continuation: 0, newTopic: 0, ...over };
@@ -144,6 +145,22 @@ describe('decideMain', () => {
     const costly = decideMain(lean, { ...base, currentTier: 'strong', pressure: 3, contextTokens: 170_000 }, cfg);
     expect(costly.tier).toBe('strong');
     expect(costly.reasons.join(' ')).toContain('kept opus');
+  });
+
+  it('by default never moves the main chat down to sonnet, and still moves it up to opus', () => {
+    const plain = resolveConfig(undefined);
+    expect(plain.router.mainDowngrade).toBe(false);
+    const easy = signals({ pStrong: 0.05 });
+    for (const ctx of [{ freeSwitch: true }, { contextTokens: 10_000 }, { pressure: 3 as const, contextTokens: 100_000 }]) {
+      const d = decideMain(easy, { ...base, currentTier: 'strong', ...ctx }, plain);
+      expect(d).toMatchObject({ tier: 'strong', switched: false });
+      expect(d.reasons.join()).toContain('moving the main chat to sonnet is off');
+    }
+    // A chat the person started on Sonnet stays there for easy work and goes up for hard work.
+    expect(decideMain(easy, { ...base, currentTier: 'standard', freeSwitch: true }, plain).tier).toBe('standard');
+    expect(decideMain(signals({ pStrong: 0.95 }), { ...base, currentTier: 'standard' }, plain).tier).toBe('strong');
+    // The effort is still chosen.
+    expect(decideMain(signals({ pStrong: 0.05, effortExpected: 3 }), { ...base, currentTier: 'strong', freeSwitch: true }, plain).effort).toBe('xhigh');
   });
 
   it('leaves the model alone when model routing is off', () => {

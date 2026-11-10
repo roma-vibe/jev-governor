@@ -46,14 +46,17 @@ export default {
   'Standard tier (Sonnet)': 'Стандартный уровень (Sonnet)',
   'Model for tasks where Sonnet 5.5 is enough. Uses up subscription limits noticeably slower than Opus.':
     'Модель для задач, где хватает Sonnet 5.5. Расходует лимиты подписки заметно медленнее Opus.',
+  'Move the main chat to Sonnet': 'Переводить основной чат на Sonnet',
+  'On: where Jev finds a task easy and the switch pays in dollars, the main chat moves from Opus down to Sonnet. Off (the default): the mod never moves the main chat down, because answers on Sonnet were corrected about twice as often as on Opus for equally easy tasks. A chat you started on Sonnet yourself stays on it and still moves up to Opus for hard tasks. Subagents are not affected: they are still given Sonnet for easy tasks.':
+    'Включено: там, где Jev считает задачу лёгкой и переключение окупается в долларах, основной чат переходит с Opus на Sonnet. Выключено (по умолчанию): мод никогда не понижает модель основного чата, потому что ответы Sonnet на одинаково лёгких задачах приходилось поправлять примерно вдвое чаще, чем ответы Opus. Чат, который вы сами начали на Sonnet, остаётся на нём и по-прежнему поднимается на Opus для сложных задач. Субагентов это не касается: лёгкие задачи они по-прежнему получают на Sonnet.',
   'Strong tier (Opus)': 'Сильный уровень (Opus)',
   'Model for hard and risky tasks. Higher quality, limits are used up faster.':
     'Модель для сложных и рискованных задач. Качество выше, лимиты уходят быстрее.',
   'Thresholds are probabilities from Jev (0–1). Switching the model in the middle of a long chat resets the prompt cache and is expensive, so the mod switches freely only where the cache is cold or the context is small.':
     'Пороги — это вероятности от Jev (0–1). Смена модели посреди длинного диалога сбрасывает кэш промпта и стоит дорого, поэтому мод переключается свободно только там, где кэш холодный или контекст маленький.',
   'Choose the main chat model': 'Выбирать модель основного диалога',
-  'Jev decides on every turn whether to use Sonnet or Opus. When off, the model stays the one you chose yourself.':
-    'Jev решает на каждом ходе, Sonnet или Opus. Выключено — модель остаётся той, что вы выбрали сами.',
+  'Jev decides on every turn whether the chat needs Opus. Moving down to Sonnet is a separate switch, “Move the main chat to Sonnet” under Models. When off, the model stays the one you chose yourself.':
+    'Jev решает на каждом ходе, нужна ли чату Opus. Переход вниз, на Sonnet, включается отдельно: «Переводить основной чат на Sonnet» в разделе «Модели». Выключено — модель остаётся той, что вы выбрали сами.',
   'Choose effort every turn': 'Выбирать effort каждый ход',
   'Jev picks the reasoning depth for each turn. Changing effort does not reset the cache on Opus/Sonnet 5.5, so it is safe. When off, effort stays as it was.':
     'Jev подбирает глубину рассуждений на каждый ход. Смена effort не сбрасывает кэш на Opus/Sonnet 5.5, поэтому безопасна. Выключено — effort остаётся прежним.',
@@ -64,8 +67,8 @@ export default {
   'The probability that Opus is needed at which the chat switches even with a warm cache. This is expensive: the whole context is read again. A higher threshold means the mod breaks the cache less often, but stays on Sonnet longer where Opus is needed.':
     'Вероятность, что нужна Opus, при которой диалог переключается даже при тёплом кэше. Это дорого: весь контекст читается заново. Выше порог — мод реже ломает кэш, но дольше остаётся на Sonnet там, где нужна Opus.',
   'Threshold for returning to Sonnet': 'Порог возврата на Sonnet',
-  'The probability that Sonnet is enough at which the chat returns from Opus to Sonnet (where that is cheap). A higher threshold is more cautious: you stay on Opus longer and spend more.':
-    'Вероятность, что хватит Sonnet, при которой диалог возвращается с Opus на Sonnet (там, где это дёшево). Выше порог — осторожнее: дольше остаётесь на Opus и тратите больше.',
+  'The probability that Sonnet is enough at which the chat returns from Opus to Sonnet (where that is cheap). A higher threshold is more cautious: you stay on Opus longer and spend more. Works only while “Move the main chat to Sonnet” (under Models) is on.':
+    'Вероятность, что хватит Sonnet, при которой диалог возвращается с Opus на Sonnet (там, где это дёшево). Выше порог — осторожнее: дольше остаётесь на Opus и тратите больше. Действует, только пока включено «Переводить основной чат на Sonnet» (раздел «Модели»).',
   'Cheap switch: context up to': 'Дешёвое переключение: контекст до',
   'tokens': 'токенов',
   'If the context is no larger than this, switching to Opus counts as cheap: there is almost nothing to lose in the cache. Switching to Sonnet is decided in dollars (setting below).':

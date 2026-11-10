@@ -27,7 +27,7 @@ import { afterReset, readReset } from './lib/reset.ts';
 import { createMemory } from './lib/memory.ts';
 import { createProjects, entriesOfProject } from './lib/projects.ts';
 
-const VERSION = '0.3.17';
+const VERSION = '0.3.18';
 const UI_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(UI_DIR);
 const DIST = path.join(UI_DIR, 'dist');

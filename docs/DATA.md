@@ -229,6 +229,12 @@ splits the managed turns' cost into input, output, cache reads and cache writes.
 - `excludeProjects` — paths whose sessions send nothing to Jev.
 - `compaction.maxPruneRatio` (0.8), `compaction.resultPreviewChars` (150).
 - `router.expectedTurns` (4) — turns a move to Sonnet must pay back within.
+- `router.mainDowngrade` (false, 0.3.18) — whether the main chat may be moved from Opus down to Sonnet at
+  all. Off, `downgradeAt`, `expectedTurns` and `standardMaxContextTokens` have nothing to act on; a chat
+  on Sonnet by the person's choice stays there and still moves up; subagents are routed as before. It
+  was on until 0.3.17. Why off: over 2026-10-13…11-10 the turn after an answer on Sonnet was a
+  correction 25% of the time against 14% on Opus for tasks Jev judged equally easy (P(opus) < 0.3),
+  and the extra turns cost about what Sonnet's cheaper output saved.
 - `router.settleTurns` (3, 0.3.11) — after a model switch on a warm cache, no switch back for this many
   turns: each switch rewrites the cache and drops the reasoning kept so far (Opus 5.5 and Sonnet 5.5
   cannot read each other's thinking). A clear upgrade (P ≥ 0.8), a risky task, a critical budget or a

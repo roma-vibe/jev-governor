@@ -19,6 +19,7 @@ export const DEFAULT_CONFIG: GovernorConfig = {
   fable: { enabled: false, model: 'claude-fable-5-2', maxEffort: 'max' },
   router: {
     mainModel: true,
+    mainDowngrade: false,
     mainEffort: true,
     subagents: true,
     respectExplicitModel: true,
@@ -296,6 +297,7 @@ export function resolveConfig(raw: unknown): GovernorConfig {
     fable: { enabled: bool(fable.enabled, d.fable.enabled), model: str(fable.model, d.fable.model), maxEffort: effort(fable.maxEffort, d.fable.maxEffort) },
     router: {
       mainModel: bool(r.mainModel, d.router.mainModel),
+      mainDowngrade: bool(r.mainDowngrade, d.router.mainDowngrade),
       mainEffort: bool(r.mainEffort, d.router.mainEffort),
       subagents: bool(r.subagents, d.router.subagents),
       respectExplicitModel: bool(r.respectExplicitModel, d.router.respectExplicitModel),

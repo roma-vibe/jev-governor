@@ -3002,7 +3002,7 @@ async function statusReport($: EngineInterface): Promise<string> {
           ),
         ]
       : []),
-    `routing: main model ${cfg.fable.enabled ? 'fixed' : cfg.router.mainModel ? 'on' : 'off'}, main effort ${cfg.router.mainEffort ? 'on' : 'off'}, subagents ${cfg.router.subagents ? 'on' : 'off'}; compaction ${cfg.compaction.enabled ? `on (at ${Math.round(cfg.compaction.compactAtTokens / 1000)}k${cfg.compaction.archive ? ', archive' : ''})` : 'off'}; handoff ${cfg.handoff.enabled ? 'on' : 'off'}`,
+    `routing: main model ${cfg.fable.enabled ? 'fixed' : cfg.router.mainModel ? (cfg.router.mainDowngrade ? 'on' : 'on (to Opus only, never down to Sonnet)') : 'off'}, main effort ${cfg.router.mainEffort ? 'on' : 'off'}, subagents ${cfg.router.subagents ? 'on' : 'off'}; compaction ${cfg.compaction.enabled ? `on (at ${Math.round(cfg.compaction.compactAtTokens / 1000)}k${cfg.compaction.archive ? ', archive' : ''})` : 'off'}; handoff ${cfg.handoff.enabled ? 'on' : 'off'}`,
     `last: ${S.route.lastModel ? displayModel(S.route.lastModel) : '—'}${prev ? ` · ${prev.effort}` : ''} · budget ${budget.text || 'n/a'} (pressure ${budget.pressure})`,
     `${registryLine()} (/jevg agents)`,
     `data: ${S.data}`,
