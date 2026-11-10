@@ -29,18 +29,21 @@ export default {
   'Memories joined.': 'Памяти объединены.',
   'Make “{id}” a separate project again?': 'Снова сделать «{id}» отдельным проектом?',
   'Separated.': 'Разделено.',
-  'the service answers': 'сервис отвечает',
-  'the service does not answer': 'сервис не отвечает',
-  'no key': 'нет ключа',
-  'switched off in the settings': 'выключена в настройках',
+  working: 'работает',
+  'on, the service does not answer': 'включена, сервис не отвечает',
+  'on, no service found': 'включена, сервис не найден',
+  'switched off': 'выключена',
   Refresh: 'Обновить',
   'Two layers. “About me” is who you are and how you want to be worked with: it is read at the start of every chat in every project. A project’s memory holds its decisions, conventions, traps and a note of each chat on it; a chat on that project gets what its task needs, and a task that reaches into another project gets that project’s notes too.':
     'Два слоя. «Обо мне» — кто вы и как с вами работать: читается в начале каждого чата в любом проекте. Память проекта хранит его решения, соглашения, ловушки и заметку о каждом чате по нему; чат в этом проекте получает то, что нужно его задаче, а задача, которая касается другого проекта, получает заметки и оттуда.',
-  'No key for the memory service was found in {file}.': 'Ключ сервиса памяти не найден в {file}.',
-  'The memory service does not answer.': 'Сервис памяти не отвечает.',
-  'Start it with /jevg memory start in a chat.': 'Запустите его командой /jevg memory start в чате.',
-  'The memory is switched off: chats neither read nor save. Turn it on in Settings → Context, or with /jevg memory on.':
-    'Память выключена: чаты ничего не читают и не сохраняют. Включите её в «Настройки → Контекст» или командой /jevg memory on.',
+  'No memory service was found (no key in {file}), so the memory is not used. Nothing needs switching: once the service is set up, the memory starts working by itself.':
+    'Сервис памяти не найден (нет ключа в {file}), поэтому память не используется. Переключать ничего не нужно: как только сервис будет настроен, память заработает сама.',
+  'The memory service does not answer at {url}, so the memory is not used for now. Nothing needs switching: when the service is back, the memory works again by itself.':
+    'Сервис памяти не отвечает по адресу {url}, поэтому память пока не используется. Переключать ничего не нужно: когда сервис вернётся, память снова заработает сама.',
+  'Memory on. Chats pick it up on their next turn.': 'Память включена. Чаты подхватят её со следующего хода.',
+  'Memory off. The memory service is no longer touched.': 'Память выключена. К сервису памяти больше нет обращений.',
+  'Switched off: the mod does not touch the memory service at all. Chats get no notes and save nothing, and everything else works as it did. What is stored stays where it is.':
+    'Выключена: мод вообще не обращается к сервису памяти. Чаты не получают заметок и ничего не сохраняют, всё остальное работает как раньше. То, что уже сохранено, остаётся на месте.',
   'In the last {days} days: notes went into {with} of {recalls} chats and subagent tasks ({notes} notes); {saved} facts and {chats} chat notes were saved in {saves} readings of the dialog.':
     'За последние {days} дн.: заметки попали в {with} из {recalls} чатов и задач субагентов (заметок: {notes}); сохранено фактов: {saved}, заметок о чатах: {chats} — за {saves} чтений диалога.',
   'Failures: {n}.': 'Сбоев: {n}.',

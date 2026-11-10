@@ -345,6 +345,9 @@ describe('memory settings written by an older settings page', () => {
     const own = resolveConfig({ memory: { autoSaveCheckModel: 'claude-opus-5-5', maxChars: 1800, maxFacts: 8, timeoutMs: 6000, personal: 'anna', url: ' http://10.0.0.5:8787 ' } }).memory;
     expect(own).toMatchObject({ autoSaveCheckModel: 'claude-opus-5-5', maxChars: 1800, maxFacts: 8, timeoutMs: 6000, personal: 'anna', url: 'http://10.0.0.5:8787' });
     expect(resolveConfig({ memory: { personal: '../x' } }).memory.personal).toBe('');
+    // On unless switched off: without a service it is simply not used.
+    expect(resolveConfig(undefined).memory.enabled).toBe(true);
+    expect(resolveConfig({ memory: { enabled: false } }).memory.enabled).toBe(false);
   });
 });
 

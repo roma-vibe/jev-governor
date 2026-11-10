@@ -205,6 +205,8 @@ export const S = {
     /** The chat's recall reached the memory (so the model's own recall is the same notes again). */
     recalledOk: false,
     lastRecall: undefined as { at: number; facts: number; error?: string } | undefined,
+    /** The chat and the reason the journal was last told the memory is not there (told once). */
+    absentSaid: '',
     /** The service's address and key, and the settings they were read for. */
     conn: undefined as { base: string; key: string } | undefined,
     connFor: '',

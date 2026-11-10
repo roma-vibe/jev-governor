@@ -133,7 +133,9 @@ export const DEFAULT_CONFIG: GovernorConfig = {
     showWorktrees: false,
   },
   memory: {
-    enabled: false,
+    // On by default: with no memory service to be found (no key, nobody answering) nothing is
+    // used and nothing is asked of the model, and the day the service is there it works.
+    enabled: true,
     url: '',
     keyFile: '~/.config/mnema-mcp/config.toml',
     personal: '',

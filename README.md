@@ -2,7 +2,7 @@
 
 [English](README.md) · [Русский](README.ru.md)
 
-![version](https://img.shields.io/badge/version-0.3.16-blue)
+![version](https://img.shields.io/badge/version-0.3.17-blue)
 ![Claude Code](https://img.shields.io/badge/Claude_Code-%E2%89%A5%202.1.287-D97757)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![ToS](https://img.shields.io/badge/ToS-white%20zone%20only-brightgreen)
@@ -31,7 +31,7 @@ Mods shipped in Claude Code 2.1.287. This one uses only that official mechanism:
 - **Escalation on facts.** When tool calls fail close together (by default 2 of the last 6 results), the effort goes up for the rest of the turn; scattered failures over a long turn do not count.
 - **Limits-aware.** If the 5-hour or weekly window is burning faster than normal, thresholds shift toward saving.
 - **Short waits in subagents.** Each subagent task asks to wait for builds no longer than 4 minutes per call: its cache lives 5 minutes, and a longer pause rewrites its whole context.
-- **Long-term memory (optional, `memory.*`).** Two layers in the [Mnema](#long-term-memory) service: what it knows about you goes into every chat in every project, and each project keeps its own decisions, traps and a note of every chat; a task that reaches into another project gets that project's notes too. Haiku 5.5 saves what is durable in a dialog, Jev checks it. A Memory tab shows and edits all of it. `/jevg memory on|off|test`.
+- **Long-term memory (`memory.*`, used when a Mnema service is there).** Two layers in the [Mnema](#long-term-memory) service: what it knows about you goes into every chat in every project, and each project keeps its own decisions, traps and a note of every chat; a task that reaches into another project gets that project's notes too. Haiku 5.5 saves what is durable in a dialog, Jev checks it. A Memory tab shows and edits all of it. `/jevg memory on|off|test`.
 - **Move to a new chat.** `/jevg getctx` builds a compact "capsule" of the chat (brief, work steps, changed files, latest checks); `/jevg fresh` does it in the same window: capsule, `/clear`, capsule attached to your next message.
 - **Settings UI.** Vue 3 + Tailwind 4: cost overview with exact and estimated savings, settings, agents, skills, journal, a projects board. English by default, Russian available.
 - **Shadow mode.** Decisions are only logged, nothing changes. Use it for an honest with/without comparison.
@@ -106,7 +106,7 @@ The mod's own messages (chat notices, toasts, command replies) and the UI come i
 
 ## Long-term memory
 
-Optional, off by default (`/jevg memory on`). The mod reads and writes the Mnema memory service itself, over its HTTP API. Two layers, kept apart:
+On by default; with no Mnema service to be found (no key, nobody answering) it is simply not used, and it starts working by itself the day the service is there. The switch is at the top of the Memory tab (or `/jevg memory on|off`); off, the mod does not touch the service at all. The mod reads and writes the service itself, over its HTTP API. Two layers, kept apart:
 
 - **About you** (`dev.<login>`): who you are and how you want to be worked with. It follows you into every project: what is pinned or marked important always, then what the task brings up, then your newest preferences (`memory.maxPersonal`, 6).
 - **A project's memory** (`repo.<host>.<owner>.<name>` from the git remote, so every checkout and worktree shares it; `repo.local.<folder>-<hash>` without a remote): its decisions and their reasons, conventions, traps, how it is built and run, and one short note per chat on it (what the chat did, decided and left open). A project that got its remote later still reads its older memory.
@@ -137,6 +137,8 @@ scripts/mnema-local.sh start
 ```bash
 claude mcp add mnema-memory --scope user -- ~/Documents/mnema-mcp/.venv/bin/mnema-mcp
 ```
+
+To keep the service under a process manager instead (it owns the process, restarts it and shows its log), make `scripts/mnema-local.sh run` the command of a project there, port 8787: `run` stays in the foreground, takes over from a server started in the background, and from then on `start` leaves the server to the manager. The port is `MNEMA_PORT` (8787): when the manager gives the service another one, `run` writes the new address into the mnema-mcp config file (`base_url`), and the mod reads the file again in every new chat and after a refused connection, so its UI, the mod and the `mnema-mcp` server follow. An address set in the settings (`memory.url`) or one that is not this machine's is left alone.
 
 The second command writes the key file the mod reads too (`memory.keyFile`, `~/.config/mnema-mcp/config.toml`); the third gives the model its own memory tools and is optional. `scripts/mnema-local.sh` runs the service on real embeddings through OpenRouter when `.openrouter_key` (or `OPENROUTER_API_KEY`) is present, else offline.
 

@@ -274,7 +274,7 @@ splits the managed turns' cost into input, output, cache reads and cache writes.
   (`~/.config/mnema-mcp/config.toml`), `personal` (empty: the login), `maxPersonal` (6), `sessionNotes` (true),
   `related` (true), `relatedMax` (2), `relatedAt` (0.6), `autoSaveCheck` (`jev` | `model`), `autoSaveKeepAt` (0.6);
   `autoSaveCheckModel` is `claude-haiku-5-5`, `maxFacts` 14, `maxChars` 3000, `timeoutMs` 4000.
-- `memory` (0.3.5): `enabled` (false), `server` (`mnema-memory`, the MCP server's name), `autoStart` (true),
+- `memory` (0.3.5): `enabled` (true since 0.3.17; with no service to be found the memory is simply not used), `server` (`mnema-memory`, the MCP server's name), `autoStart` (true),
   `startCommand` (empty: `scripts/mnema-local.sh start`), `recallOnStart` (true), `recallForSubagents` (true),
   `subagentMinChars` (200), `saveOnHandoff` (true), `autoSave` (true, 0.3.10), `autoSaveModel` (`claude-haiku-5-5`, reads the dialog), `autoSaveCheckModel` (`claude-sonnet-5-5`, checks the few candidates), `autoSaveEveryTurns` (6), `autoSaveIdleMinutes` (3), `autoSaveMaxFacts` (3), `modelTools` (true), `modelRecall` (false), `maxChars` (2500), `maxFacts` (12),
   `timeoutMs` (2500). See README, "Long-term memory".

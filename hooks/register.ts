@@ -2029,10 +2029,14 @@ async function startMemoryServer($: EngineInterface): Promise<boolean> {
   return !error;
 }
 
-/** The service's address and key: the settings, then the mnema-mcp config file. Kept until the settings name another place. */
+/**
+ * The service's address and key: the settings, then the mnema-mcp config file. Read once per chat,
+ * and again after a failed connection: a supervisor may have moved the service to another port,
+ * and its launcher (scripts/mnema-local.sh) writes the new address into that file.
+ */
 async function memoryConn($: EngineInterface): Promise<MnemaConfig | undefined> {
   const m = S.cfg.memory;
-  const sig = `${m.url}|${m.keyFile}`;
+  const sig = `${S.session}|${m.url}|${m.keyFile}`;
   if (S.memory.conn && S.memory.connFor === sig) return S.memory.conn;
   let key = (await $.env.get('MNEMA_API_KEY'))?.trim() || undefined;
   let base = m.url || undefined;
@@ -2060,22 +2064,51 @@ async function withMemory<T>($: EngineInterface, work: (api: Mnema) => Promise<T
   if (Date.now() < S.memory.downUntil) throw new Error(S.memory.lastError ?? 'memory service unavailable');
   const conn = await memoryConn($);
   if (!conn) throw new Error(L(`нет ключа сервиса памяти (${S.cfg.memory.keyFile})`, `no key for the memory service (${S.cfg.memory.keyFile})`));
-  const api = mnema(async (url, init) => {
-    const response = await $.http.fetch(url, init);
-    return { status: response.status, ok: response.ok, text: response.text };
-  }, conn);
-  const once = (): Promise<T> => withTimeout(work(api), (ms) => $.clock.sleep(ms), timeoutMs);
+  const run = (at: MnemaConfig): Promise<T> =>
+    withTimeout(
+      work(
+        mnema(async (url, init) => {
+          const response = await $.http.fetch(url, init);
+          return { status: response.status, ok: response.ok, text: response.text };
+        }, at),
+      ),
+      (ms) => $.clock.sleep(ms),
+      timeoutMs,
+    );
   // A refused request (a bad fact, an unknown id) says nothing about the service being up.
   const serviceFault = (error: unknown): boolean => !(error instanceof MnemaError) || error.status >= 500 || error.status === 401 || error.status === 403;
+  const unreachable = (error: unknown): boolean => !(error instanceof MnemaError) && looksDown(errorText(error));
+  /** The address as the file gives it now, when it is not the one just tried. */
+  const moved = async (tried: MnemaConfig): Promise<MnemaConfig | undefined> => {
+    S.memory.conn = undefined;
+    const now = await memoryConn($);
+    return now && now.base !== tried.base ? now : undefined;
+  };
   try {
-    const result = await once();
+    const result = await run(conn);
     S.memory.lastError = undefined;
     return result;
   } catch (first) {
     let error: unknown = first;
-    if (S.cfg.memory.autoStart && !(first instanceof MnemaError) && looksDown(errorText(first)) && Date.now() - S.memory.startedAt > MEMORY_START_EVERY_MS && (await startMemoryServer($))) {
+    let at = conn;
+    if (unreachable(error)) {
+      // Nobody answers there: the service may be on another port now.
+      const elsewhere = await moved(at);
+      if (elsewhere) {
+        at = elsewhere;
+        try {
+          const result = await run(at);
+          S.memory.lastError = undefined;
+          return result;
+        } catch (again) {
+          error = again;
+        }
+      }
+    }
+    if (S.cfg.memory.autoStart && unreachable(error) && Date.now() - S.memory.startedAt > MEMORY_START_EVERY_MS && (await startMemoryServer($))) {
       try {
-        const result = await once();
+        // Started just now, perhaps on another port than the file said.
+        const result = await run((await moved(at)) ?? at);
         S.memory.lastError = undefined;
         return result;
       } catch (again) {
@@ -2318,6 +2351,14 @@ async function withRecall<E extends { text: string; context?: readonly string[] 
   // Only a recall that reached the memory lets the mod refuse the model's own (tool.check).
   S.memory.recalledOk = recalled.error === undefined;
   S.memory.lastRecall = { at: Date.now(), facts: recalled.block?.facts ?? 0, ...(recalled.error ? { error: recalled.error } : {}) };
+  // The memory was not there (no key, nobody answering): the chat goes on without it, and its next
+  // prompt asks again, so the memory is used as soon as it appears. Said once per chat in the journal.
+  if (recalled.error && !recalled.block) {
+    S.memory.recalledFor = undefined;
+    const said = `${S.session}|${recalled.error}`;
+    if (S.memory.absentSaid === said) return e;
+    S.memory.absentSaid = said;
+  }
   const add = recalled.block && !shadow();
   await ledger($, { kind: 'memory', scope: 'main', applied: !shadow(), text: clip(task, 160), memory: { ...memoryEntry(recalled, 'prompt'), ...(origin ? { origin } : {}) } });
   if (add && recalled.block!.facts > 0) {

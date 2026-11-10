@@ -310,7 +310,11 @@ export type GovernorConfig = {
    * recalled into a new conversation and into subagents so they do not rediscover it by reading.
    */
   memory: {
-    /** The whole option; off, the mod neither recalls nor saves, and refuses the server's tools (`modelTools`). */
+    /**
+     * The whole option; off, the mod never touches the memory service (no recall, no saving) and
+     * refuses the server's tools to the model. On with no service to be found, the memory is simply
+     * not used; the switch stays as it is, so it works as soon as the service is there.
+     */
     enabled: boolean;
     /**
      * The memory service's address. Empty: `base_url` of the mnema-mcp config file (`keyFile`), else

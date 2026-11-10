@@ -4,7 +4,9 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { api, notify, type FactView, type MemoryOverview, type MemoryProjectView } from '../api.ts';
 import { locale, t } from '../i18n/index.ts';
 import { go, segments } from '../router.ts';
+import { store } from '../store.ts';
 import Modal from './Modal.vue';
+import Toggle from './Toggle.vue';
 
 const TYPES = ['decision', 'convention', 'architecture', 'bug', 'gotcha', 'workflow', 'preference', 'reference', 'context'] as const;
 const LEVELS = ['core', 'high', 'normal', 'low'] as const;
@@ -15,6 +17,7 @@ const facts = ref<FactView[]>([]);
 const factsFor = ref('');
 const loadingFacts = ref(false);
 const busy = ref(false);
+const toggling = ref(false);
 const search = ref('');
 const projectSearch = ref('');
 const typeFilter = ref('');
@@ -141,6 +144,21 @@ async function refresh(): Promise<void> {
   await loadFacts();
 }
 
+/** The switch saves at once. Off, nothing is asked of the memory service, by this page either. */
+async function toggleMemory(on: boolean): Promise<void> {
+  if (toggling.value) return;
+  toggling.value = true;
+  try {
+    store.config = await api.saveConfig({ memory: { enabled: on } });
+    notify(on ? t('Memory on. Chats pick it up on their next turn.') : t('Memory off. The memory service is no longer touched.'));
+    await refresh();
+  } catch {
+    // shown as a toast
+  } finally {
+    toggling.value = false;
+  }
+}
+
 function open(id: string): void {
   go(`/memory/${encodeURIComponent(id)}`);
 }
@@ -231,33 +249,38 @@ async function split(id: string): Promise<void> {
     <p v-if="!overview" class="text-sm text-zinc-500">{{ t('Loading…') }}</p>
 
     <template v-else>
-      <section class="card space-y-2">
-        <div class="flex flex-wrap items-center gap-2">
-          <h2 class="text-base font-semibold">{{ t('Long-term memory') }}</h2>
-          <span class="badge" :class="overview.reachable ? 'badge-green' : 'badge-red'">
-            {{ overview.reachable ? t('the service answers') : overview.configured ? t('the service does not answer') : t('no key') }}
-          </span>
-          <span v-if="!overview.enabled" class="badge badge-amber">{{ t('switched off in the settings') }}</span>
-          <span class="mono text-zinc-500 dark:text-zinc-400">{{ overview.url }}</span>
-          <button type="button" class="btn btn-sm ml-auto" :disabled="busy" @click="refresh">{{ t('Refresh') }}</button>
+      <section class="card space-y-2" :class="overview.enabled ? '' : 'opacity-90'">
+        <div class="flex items-start gap-4">
+          <div class="min-w-0 flex-1 space-y-2">
+            <div class="flex flex-wrap items-center gap-2">
+              <h2 class="text-base font-semibold">{{ t('Long-term memory') }}</h2>
+              <span v-if="!overview.enabled" class="badge badge-gray">{{ t('switched off') }}</span>
+              <span v-else-if="overview.reachable" class="badge badge-green">{{ t('working') }}</span>
+              <span v-else class="badge badge-amber">{{ overview.configured ? t('on, the service does not answer') : t('on, no service found') }}</span>
+              <span v-if="overview.enabled" class="mono text-zinc-500 dark:text-zinc-400">{{ overview.url }}</span>
+              <button type="button" class="btn btn-sm" :disabled="busy" @click="refresh">{{ t('Refresh') }}</button>
+            </div>
+            <p class="help">
+              {{
+                t(
+                  'Two layers. “About me” is who you are and how you want to be worked with: it is read at the start of every chat in every project. A project’s memory holds its decisions, conventions, traps and a note of each chat on it; a chat on that project gets what its task needs, and a task that reaches into another project gets that project’s notes too.',
+                )
+              }}
+            </p>
+          </div>
+          <Toggle :model-value="overview.enabled" :disabled="toggling" :label="t('Long-term memory')" @update:model-value="toggleMemory" />
         </div>
-        <p class="help">
-          {{
-            t(
-              'Two layers. “About me” is who you are and how you want to be worked with: it is read at the start of every chat in every project. A project’s memory holds its decisions, conventions, traps and a note of each chat on it; a chat on that project gets what its task needs, and a task that reaches into another project gets that project’s notes too.',
-            )
-          }}
+        <p v-if="!overview.enabled" class="text-sm text-zinc-600 dark:text-zinc-300">
+          {{ t('Switched off: the mod does not touch the memory service at all. Chats get no notes and save nothing, and everything else works as it did. What is stored stays where it is.') }}
         </p>
-        <p v-if="!overview.configured" class="text-sm text-amber-700 dark:text-amber-400">
-          {{ t('No key for the memory service was found in {file}.', { file: overview.keyFile }) }}
+        <p v-else-if="!overview.configured" class="text-sm text-amber-700 dark:text-amber-400">
+          {{ t('No memory service was found (no key in {file}), so the memory is not used. Nothing needs switching: once the service is set up, the memory starts working by itself.', { file: overview.keyFile }) }}
         </p>
-        <p v-else-if="!overview.reachable" class="text-sm text-red-700 dark:text-red-400">
-          {{ overview.error ?? t('The memory service does not answer.') }} {{ t('Start it with /jevg memory start in a chat.') }}
+        <p v-else-if="!overview.reachable" class="text-sm text-amber-700 dark:text-amber-400">
+          {{ t('The memory service does not answer at {url}, so the memory is not used for now. Nothing needs switching: when the service is back, the memory works again by itself.', { url: overview.url }) }}
+          <span v-if="overview.error" class="mono">{{ overview.error }}</span>
         </p>
-        <p v-else-if="!overview.enabled" class="text-sm text-amber-700 dark:text-amber-400">
-          {{ t('The memory is switched off: chats neither read nor save. Turn it on in Settings → Context, or with /jevg memory on.') }}
-        </p>
-        <p class="text-sm">
+        <p v-if="overview.enabled" class="text-sm">
           {{
             t('In the last {days} days: notes went into {with} of {recalls} chats and subagent tasks ({notes} notes); {saved} facts and {chats} chat notes were saved in {saves} readings of the dialog.', {
               days: overview.activity.days,

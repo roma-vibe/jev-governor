@@ -95,8 +95,9 @@ export function createMemory(deps: MemoryDeps) {
     return { api, url, keyFile };
   }
 
-  /** The service's client, or an HTTP error the page can show. */
+  /** The service's client, or an HTTP error the page can show. Switched off, the service is not touched at all. */
   async function service(): Promise<Mnema> {
+    if (!(await loadConfig()).memory.enabled) throw new HttpError(409, tr('The memory is switched off.', 'Память выключена.'));
     const c = await connect();
     if (!c.api) throw new HttpError(503, tr(`No key for the memory service (${c.keyFile}).`, `Нет ключа сервиса памяти (${c.keyFile}).`));
     return c.api;
@@ -162,13 +163,15 @@ export function createMemory(deps: MemoryDeps) {
       projects: [],
       activity: await activity(7),
     };
-    if (!c.api) return base;
+    // Switched off: nothing is asked of the service, by the page either.
+    if (!c.api || !config.memory.enabled) return base;
     const api = c.api;
     let users: string[];
     try {
       users = await api.users();
     } catch (error) {
-      return { ...base, error: error instanceof MnemaError ? error.message : tr('The memory service does not answer.', 'Сервис памяти не отвечает.') };
+      // What the service said when it refused (a bad key); silence is told by `reachable: false` alone.
+      return { ...base, error: error instanceof MnemaError ? error.message : null };
     }
     const reg = await withLock(async () => {
       const r = await loadReg();

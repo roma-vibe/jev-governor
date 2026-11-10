@@ -32,8 +32,11 @@ const DATA = `${HOME}/.claude/jev-governor`;
 const files = new Map<string, string>();
 /** The mod's messages in the sim are Russian unless a test says otherwise ('auto' follows the machine). */
 const seedConfig = (language: 'ru' | 'en'): void => {
-  const cfg = resolveConfig(files.has(`${DATA}/config.json`) ? JSON.parse(files.get(`${DATA}/config.json`)!) : undefined);
-  files.set(`${DATA}/config.json`, `${JSON.stringify({ ...cfg, ui: { ...cfg.ui, language } }, null, 2)}\n`);
+  const had = files.has(`${DATA}/config.json`);
+  const cfg = resolveConfig(had ? JSON.parse(files.get(`${DATA}/config.json`)!) : undefined);
+  // The memory is on by default; the sim keeps it off outside its own tests, which switch it on.
+  const memory = had ? cfg.memory : { ...cfg.memory, enabled: false };
+  files.set(`${DATA}/config.json`, `${JSON.stringify({ ...cfg, memory, ui: { ...cfg.ui, language } }, null, 2)}\n`);
 };
 seedConfig('ru');
 /** Sets one handoff option in the sim's config file (read again at the next turn or command). */
@@ -68,6 +71,8 @@ type FakeFact = { id: string; text: string; kind: string; tags: string[]; status
 const mnemaFacts = new Map<string, FakeFact[]>();
 const mnemaCalls: { method: string; path: string; auth?: string; body?: any }[] = [];
 let mnemaUp = true;
+/** The port the service listens on; a request to another local port finds nobody. */
+let mnemaPort = 8787;
 let mnemaSeq = 0;
 function addFact(memory: string, text: string, tags: string[], more: { importance?: string; updatedAt?: string; kind?: string } = {}): FakeFact {
   const at = more.updatedAt ?? `2026-11-0${1 + (mnemaSeq % 8)}T12:00:0${mnemaSeq % 10}Z`;
@@ -76,7 +81,7 @@ function addFact(memory: string, text: string, tags: string[], more: { importanc
   return fact;
 }
 function mnemaFake(url: string, init: { method?: string; headers?: Record<string, string>; body?: string } = {}): { status: number; ok: boolean; text: string } {
-  if (!mnemaUp) throw new Error('fetch failed: connect ECONNREFUSED 127.0.0.1:8787');
+  if (!mnemaUp || !url.startsWith(`http://127.0.0.1:${mnemaPort}/`)) throw new Error('fetch failed: connect ECONNREFUSED 127.0.0.1');
   const method = init.method ?? 'GET';
   const path = decodeURIComponent(new URL(url).pathname);
   const body = init.body ? JSON.parse(init.body) : undefined;
@@ -217,7 +222,7 @@ const $ = {
   },
   http: {
     fetch: async (url: string, init: { body: string; method?: string; headers?: Record<string, string> }) => {
-      if (url.startsWith('http://127.0.0.1:8787')) return mnemaFake(url, init);
+      if (url.startsWith('http://127.0.0.1:87')) return mnemaFake(url, init);
       bodies.push(init.body);
       if (jevDown) return { status: 503, ok: false, text: 'down' };
       if (jevFlaky > 0) {
@@ -1601,6 +1606,7 @@ describe('jev-governor hooks against a fake engine', () => {
       mnemaFacts.clear();
       mnemaCalls.length = 0;
       mnemaUp = true;
+      mnemaPort = 8787;
       jevKeep = 0.9;
       jevRel = 0.1;
       env.set('USER', 'r');
@@ -1890,6 +1896,31 @@ describe('jev-governor hooks against a fake engine', () => {
       expect((await emit('tool.check', { tool: 'mcp__mnema-memory__recall', input: {} }, async () => ({ decision: 'ask' }))).decision).toBe('allow');
     });
 
+    it('on with no service to be found: the memory is simply not used, said once per chat, and works as soon as the service is there', async () => {
+      service();
+      addFact(PROJECT, 'Payments retry through the queue in src/pay/retry.ts', ['decision']);
+      files.delete(`${HOME}/.config/mnema-mcp/config.toml`);
+      await setMemory({ enabled: true });
+      await startSession('mem-absent');
+      sessionTurns = 0;
+      mnemaCalls.length = 0;
+      expect((await emit('prompt.submit', { text: 'почини падающую проверку в модуле оплаты' })).context).toBeUndefined();
+      sessionTurns = 1;
+      expect((await emit('prompt.submit', { text: 'и добавь проверку на повтор платежа' })).context).toBeUndefined();
+      expect(mnemaCalls).toHaveLength(0);
+      expect(ledgerOf('mem-absent').filter((e) => e.kind === 'memory')).toHaveLength(1);
+      // The service appears: the same chat's next prompt gets the notes. Nobody touched the switch.
+      files.set(`${HOME}/.config/mnema-mcp/config.toml`, 'api_key = "mn_test_0123456789abcdef"\nbase_url = "http://127.0.0.1:8787"\n');
+      sessionTurns = 2;
+      const result = await emit('prompt.submit', { text: 'теперь поправь расписание повторов платежа' });
+      expect(result.context?.[0]).toContain('src/pay/retry.ts');
+      expect(JSON.parse(files.get(`${DATA}/config.json`)!).memory.enabled).toBe(true);
+      // Once it worked, the chat is not asked again.
+      const before = mnemaCalls.length;
+      expect((await emit('prompt.submit', { text: 'и ещё одну проверку добавь сюда же' })).context).toBeUndefined();
+      expect(mnemaCalls).toHaveLength(before);
+    });
+
     it('a project that got its git remote later still reads its older memory; a project without a remote is named by its folder', async () => {
       service();
       // The folder had no remote before: its memory was the local one.
@@ -1995,6 +2026,35 @@ describe('jev-governor hooks against a fake engine', () => {
       await emit('prompt.submit', { text: 'почини падающую проверку в модуле оплаты' });
       expect(mnemaCalls).toHaveLength(0);
       mnemaUp = true;
+      await cmd('memory');
+    });
+
+    it('follows the service to another port: the address is read again after a refused connection, and by every new chat', async () => {
+      service();
+      addFact(PROJECT, 'Payments retry through the queue in src/pay/retry.ts', ['decision']);
+      await setMemory({ enabled: true, autoStart: false });
+      await startSession('mem-port-1');
+      sessionTurns = 0;
+      expect((await emit('prompt.submit', { text: 'почини падающую проверку в модуле оплаты' })).context?.[0]).toContain('src/pay/retry.ts');
+      // The supervisor moved the service; its launcher wrote the new address into the config file.
+      mnemaPort = 8788;
+      files.set(`${HOME}/.config/mnema-mcp/config.toml`, 'api_key = "mn_test_0123456789abcdef"\nbase_url = "http://127.0.0.1:8788"\n');
+      // The same chat: the old address refuses, the file is read again, the call goes through.
+      mnemaCalls.length = 0;
+      const check = await cmd('memory test почини повтор платежей');
+      expect(check).toContain('src/pay/retry.ts');
+      // A new chat reads the file at once.
+      await startSession('mem-port-2');
+      sessionTurns = 0;
+      const result = await emit('prompt.submit', { text: 'почини падающую проверку в модуле оплаты' });
+      expect(result.context?.[0]).toContain('src/pay/retry.ts');
+      expect(ledgerOf('mem-port-2').find((e) => e.kind === 'memory')?.memory).toMatchObject({ ok: true, project: 1 });
+      // An address set in the settings is the person's own: the file does not override it.
+      await setMemory({ url: 'http://127.0.0.1:8787' });
+      await startSession('mem-port-3');
+      sessionTurns = 0;
+      expect((await emit('prompt.submit', { text: 'почини падающую проверку в модуле оплаты' })).context).toBeUndefined();
+      await setMemory({ url: '', autoStart: true });
       await cmd('memory');
     });
 
