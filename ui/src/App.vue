@@ -5,6 +5,7 @@ import { modelLabel } from '../../hooks/lib/providers.ts';
 import { connection } from './api.ts';
 import Agents from './components/Agents.vue';
 import Journal from './components/Journal.vue';
+import Memory from './components/Memory.vue';
 import Overview from './components/Overview.vue';
 import Projects from './components/Projects.vue';
 import Savings from './components/Savings.vue';
@@ -19,6 +20,7 @@ const tabs = [
   { id: 'overview', view: Overview },
   { id: 'savings', view: Savings },
   { id: 'projects', view: Projects },
+  { id: 'memory', view: Memory },
   { id: 'settings', view: Settings },
   { id: 'agents', view: Agents },
   { id: 'skills', view: Skills },
@@ -35,6 +37,8 @@ function tabLabel(id: TabId): string {
       return t('Savings');
     case 'projects':
       return t('Projects');
+    case 'memory':
+      return t('Memory');
     case 'settings':
       return t('Settings');
     case 'agents':

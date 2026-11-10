@@ -198,6 +198,17 @@ export const S = {
    */
   memory: {
     recalledFor: undefined as string | undefined,
+    /** The chat's recall reached the memory (so the model's own recall is the same notes again). */
+    recalledOk: false,
+    lastRecall: undefined as { at: number; facts: number; error?: string } | undefined,
+    /** The service's address and key, and the settings they were read for. */
+    conn: undefined as { base: string; key: string } | undefined,
+    connFor: '',
+    /** The memories of this session's folder, and what they were worked out for. */
+    scope: undefined as MemoryScope | undefined,
+    scopeFor: '',
+    /** When the service's list of memories was last read into the registry. */
+    syncedAt: 0,
     downUntil: 0,
     startedAt: 0,
     lastError: undefined as string | undefined,
@@ -249,6 +260,9 @@ export function basename(path: string): string {
 
 /** Whether the mod works in this chat: enabled in the config and not switched off for the chat (`/jevg chat off`). */
 export type ChatState = { off: boolean; idle: boolean; fable?: ChatFable };
+
+/** The memories a session works with: the person's, and the project's when its folder has one. */
+export type MemoryScope = { personal: string; root: string; project?: string; source?: 'file' | 'remote' | 'local' };
 
 /** Takes the settings as resolved from the file; the chat's own Fable choice goes over them. */
 export function setConfig(config: GovernorConfig): void {

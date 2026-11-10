@@ -23,6 +23,7 @@ outputs/<session>/<id>.txt  full tool outputs that were trimmed (7 days / 200 MB
 outputs/<session>/pruned/<tool_use_id>.txt   calls a compaction pruned: input + full output (same caps)
 outputs/<session>/folded/<hash>-<chars>.md   old dialog messages a compaction folded: full text
 outputs/<session>/memory-read.json   turns already read for facts (memory.autoSave), so a resumed chat does not read them again
+memory/projects.json                 the projects the memory knows: memory id, name, folders, older ids (aliases), related projects
 outputs/<session>/pruned/index.md            one line per pruned call of the chat, newest last (file names relative to it)
 outputs/<session>/pruned/index-<agentId>.md  the same for one subagent
 handoffs/<id>.md            a capsule for a new chat (/jevg getctx, /jevg fresh); kept handoff.keepDays (30)
@@ -175,11 +176,15 @@ and `-grader-2`), and Jev's vote then split between them. Now:
   first failure is logged as an `error` ending in `(retrying)`.
 - A `subagent` reason `wait note added`: the task got the `<cache-note>`
   (`agents.waitHint`) asking it to keep every wait under 4 minutes.
-- `memory` (0.3.5) — a call to the long-term memory server: `memory: { action, for, ok, facts?, chars?, ms?, error? }`.
-  `action`: `recall` / `save` / `start` (the mod started the local server) / `refuse` (a model's memory tool
-  refused while the memory is off). `for`: `prompt` (first task of a chat), `subagent`, `handoff` (the brief
-  saved), `model` (the model's own call; `text` is the tool). `facts` and `chars`: what was added to the prompt;
-  `applied: false` in shadow mode (asked, nothing added). A `subagent` entry may carry the same `memory` object.
+- `memory` — what the mod did with the long-term memory (the Mnema service, spoken to over HTTP since 0.3.16):
+  `memory: { action, for, ok, facts?, personal?, project?, sessions?, related?, relatedProjects?, memory?, offered?, turns?, chars?, ms?, error? }`.
+  `action`: `recall` (notes for a prompt: `facts` in all, by layer `personal` / `project` / `sessions` (chats' notes) /
+  `related`, with the related projects' names), `extract` (a reading of the dialog: `facts` saved of `offered`, by
+  layer; `sessions: 1` when the chat's note was written; `text` holds what was saved), `save` (a failed write, or the
+  model's own save call), `start` (the mod started the local service), `refuse` (a model's memory tool refused).
+  `for`: `prompt` (first task of a chat), `subagent`, `turns` / `idle` / `manual` / `handoff` (what set a reading off),
+  `model` (the model's own call through MCP). `memory` is the project memory id used. `applied: false` in shadow mode
+  (asked, nothing added). A `subagent` entry may carry the same `memory` object.
 - `usage` also carries `long` (0.3.5): the part of the turn from steps with a prompt over 100K tokens
   (`input`, `output`, `cacheRead`, `cacheWrite`, `steps`), priced on Haiku 5.5's long rate card.
 - `error` — `error` text (Jev timeouts, drafting failures …).
@@ -265,6 +270,10 @@ splits the managed turns' cost into input, output, cache reads and cache writes.
   reading is where subagents spend. It takes the chosen effort. In `shadow` the mod only records what it
   would have chosen (`light`, `lightApplied: false`); `node scripts/monitor.mjs` prints what those
   subagents would have cost on Haiku.
+- `memory` (0.3.16 adds): `url` (empty: the key file's `base_url`, else http://127.0.0.1:8787), `keyFile`
+  (`~/.config/mnema-mcp/config.toml`), `personal` (empty: the login), `maxPersonal` (6), `sessionNotes` (true),
+  `related` (true), `relatedMax` (2), `relatedAt` (0.6), `autoSaveCheck` (`jev` | `model`), `autoSaveKeepAt` (0.6);
+  `autoSaveCheckModel` is `claude-haiku-5-5`, `maxFacts` 14, `maxChars` 3000, `timeoutMs` 4000.
 - `memory` (0.3.5): `enabled` (false), `server` (`mnema-memory`, the MCP server's name), `autoStart` (true),
   `startCommand` (empty: `scripts/mnema-local.sh start`), `recallOnStart` (true), `recallForSubagents` (true),
   `subagentMinChars` (200), `saveOnHandoff` (true), `autoSave` (true, 0.3.10), `autoSaveModel` (`claude-haiku-5-5`, reads the dialog), `autoSaveCheckModel` (`claude-sonnet-5-5`, checks the few candidates), `autoSaveEveryTurns` (6), `autoSaveIdleMinutes` (3), `autoSaveMaxFacts` (3), `modelTools` (true), `modelRecall` (false), `maxChars` (2500), `maxFacts` (12),

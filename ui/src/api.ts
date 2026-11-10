@@ -12,7 +12,11 @@ import type {
   SkillRecord,
 } from '../../hooks/lib/types.ts';
 import type { SavingEvent, SavingSource, SavingsReport } from '../../hooks/lib/savings.ts';
+import type { FactView, MemoryOverview, MemoryProjectView } from '../lib/memory-types.ts';
 import { lang, t } from './i18n/index.ts';
+
+export type { FactView, MemoryOverview, MemoryProjectView };
+export type FactInput = { text: string; type: string; importance?: string; pinned?: boolean };
 
 export type AgentView = AgentRecord & { stats: { uses: number; lastUsedAt: string | null } };
 /** The last request to fold near-copy agents together; `none` when there was none. */
@@ -275,6 +279,16 @@ export const api = {
   stats: (days: number) => get<Stats>(`/api/stats?days=${days}`, true),
   savings: (days: number, project?: string) =>
     get<SavingsView>(`/api/savings?days=${days}${project ? `&project=${seg(project)}` : ''}`, true),
+
+  memory: (quiet = false) => get<MemoryOverview>('/api/memory', quiet),
+  memoryFacts: (id: string, all = false) => get<{ id: string; facts: FactView[] }>(`/api/memory/facts?id=${seg(id)}${all ? '&status=all' : ''}`),
+  addMemoryFact: (id: string, input: FactInput) => send<FactView>('POST', '/api/memory/facts', { id, ...input }),
+  updateMemoryFact: (id: string, factId: string, patch: Partial<FactInput>) => send<FactView>('PUT', '/api/memory/facts', { id, factId, ...patch }),
+  deleteMemoryFact: (id: string, factId: string) => send<{ ok: true }>('DELETE', `/api/memory/facts?id=${seg(id)}&factId=${seg(factId)}`),
+  moveMemoryFact: (from: string, factId: string, to: string) => send<FactView>('POST', '/api/memory/move', { from, factId, to }),
+  updateMemoryProject: (id: string, patch: { name?: string; related?: string[] }) => send<{ ok: true }>('PUT', '/api/memory/projects', { id, ...patch }),
+  mergeMemory: (from: string, into: string) => send<{ ok: true }>('POST', '/api/memory/merge', { from, into }),
+  splitMemory: (id: string) => send<{ ok: true }>('POST', '/api/memory/split', { id }),
 
   projects: () => get<ProjectSummary[]>('/api/projects?all=1'),
   project: (id: string, quiet = false) => get<ProjectView>(`/api/projects/${seg(id)}`, quiet),

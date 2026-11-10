@@ -2,7 +2,7 @@
 
 [English](README.md) · [Русский](README.ru.md)
 
-![version](https://img.shields.io/badge/version-0.3.15-blue)
+![version](https://img.shields.io/badge/version-0.3.16-blue)
 ![Claude Code](https://img.shields.io/badge/Claude_Code-%E2%89%A5%202.1.287-D97757)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![ToS](https://img.shields.io/badge/ToS-white%20zone%20only-brightgreen)
@@ -31,7 +31,7 @@ Mods shipped in Claude Code 2.1.287. This one uses only that official mechanism:
 - **Escalation on facts.** When tool calls fail close together (by default 2 of the last 6 results), the effort goes up for the rest of the turn; scattered failures over a long turn do not count.
 - **Limits-aware.** If the 5-hour or weekly window is burning faster than normal, thresholds shift toward saving.
 - **Short waits in subagents.** Each subagent task asks to wait for builds no longer than 4 minutes per call: its cache lives 5 minutes, and a longer pause rewrites its whole context.
-- **Long-term memory (optional, `memory.*`).** With a memory MCP server ([Mnema](#long-term-memory)) the mod recalls what earlier chats decided and learned, itself and without a model step, and adds a few hundred tokens of notes to the first task of a chat and to subagent tasks, so they find less by reading files. The handoff brief is saved there. `/jevg memory on|off`.
+- **Long-term memory (optional, `memory.*`).** Two layers in the [Mnema](#long-term-memory) service: what it knows about you goes into every chat in every project, and each project keeps its own decisions, traps and a note of every chat; a task that reaches into another project gets that project's notes too. Haiku 5.5 saves what is durable in a dialog, Jev checks it. A Memory tab shows and edits all of it. `/jevg memory on|off|test`.
 - **Move to a new chat.** `/jevg getctx` builds a compact "capsule" of the chat (brief, work steps, changed files, latest checks); `/jevg fresh` does it in the same window: capsule, `/clear`, capsule attached to your next message.
 - **Settings UI.** Vue 3 + Tailwind 4: cost overview with exact and estimated savings, settings, agents, skills, journal, a projects board. English by default, Russian available.
 - **Shadow mode.** Decisions are only logged, nothing changes. Use it for an honest with/without comparison.
@@ -106,14 +106,23 @@ The mod's own messages (chat notices, toasts, command replies) and the UI come i
 
 ## Long-term memory
 
-Optional, off by default. The mod talks to a memory MCP server (Mnema) through Claude Code's own connection:
+Optional, off by default (`/jevg memory on`). The mod reads and writes the Mnema memory service itself, over its HTTP API. Two layers, kept apart:
 
-- **First task of a chat:** the mod runs `recall` on it and adds the notes as hidden context (a few hundred tokens; nothing when nothing relevant is stored). Not when a capsule is attached, which already carries the context.
-- **Subagents:** a subagent with a real task (`memory.subagentMinChars`) gets the notes appended to its prompt; the recall runs while the model is chosen.
-- **Handoff:** the brief of `/jevg getctx` / `/jevg fresh` is saved with `save_session`, in the background.
-- **Facts from the dialog (`memory.autoSave`, on):** every `memory.autoSaveEveryTurns` (6) finished turns and after `memory.autoSaveIdleMinutes` (3) of quiet, the mod reads the turns not read yet (what you typed and the model's last message of each turn, never tool output; secrets are cut) with `memory.autoSaveModel` (Haiku 5.5), shown the facts already stored. It offers at most `memory.autoSaveMaxFacts` (3) durable facts: decisions and their reasons, conventions, traps, how to build or release. Progress, plans and descriptions of code are not facts. A second pass on `memory.autoSaveCheckModel` (Sonnet 5.5, only when something was offered) drops what is doubtful, the filter drops repeats, progress wording and anything with a secret, and the memory server refuses a fact it has. Most readings save nothing. Saved facts carry the tag `auto` (find them with `list_facts`, remove with `forget_fact`). `/jevg memory save` reads now and shows what was saved. Not in excluded projects or shadow mode; a chat closed within a few turns of its last reading loses those turns.
-- **The model's own calls:** allowed (`memory.modelTools`), except `recall` (`memory.modelRecall`, off): the mod already recalls at the start of a chat and for subagents, and the server asks every subagent to recall again, a step over the whole context that mostly returns nothing. `save_fact`, `search` and the rest stay. Off `modelTools`, all the memory tools are refused.
-- **Failures cost one timeout:** `memory.timeoutMs` (2.5 s), then the memory is left alone for a minute. A server that does not answer is started (`scripts/mnema-local.sh start`, at most every 10 minutes).
+- **About you** (`dev.<login>`): who you are and how you want to be worked with. It follows you into every project: what is pinned or marked important always, then what the task brings up, then your newest preferences (`memory.maxPersonal`, 6).
+- **A project's memory** (`repo.<host>.<owner>.<name>` from the git remote, so every checkout and worktree shares it; `repo.local.<folder>-<hash>` without a remote): its decisions and their reasons, conventions, traps, how it is built and run, and one short note per chat on it (what the chat did, decided and left open). A project that got its remote later still reads its older memory.
+- **Related projects:** a task that names another project the memory knows gets that project's relevant notes too, and the two become related. A related project the task does not name is read only when Jev is sure the task needs it (`memory.related`, `relatedMax` 2, `relatedAt` 0.6). Relations are shown and edited on the Memory tab.
+
+What happens in a chat:
+
+- **First task of a chat:** the notes are added as hidden context (a few hundred tokens): about you, the project's facts for the task, the last three chats' notes, related projects. Not when a capsule is attached, which already carries the context.
+- **Subagents:** a subagent with a real task (`memory.subagentMinChars`) gets the project's facts for its task appended to its prompt; nothing at all when there are none.
+- **Saving (`memory.autoSave`, on):** every `memory.autoSaveEveryTurns` (6) finished turns, after `memory.autoSaveIdleMinutes` (3) of quiet and at a handoff, Haiku 5.5 reads the turns not read yet (what you typed and the model's last message of each turn, never tool output; secrets masked) and offers at most `memory.autoSaveMaxFacts` (3) facts, each for its layer: about you, about this project, or about another known project. Jev checks each one (a yes/no, kept at `memory.autoSaveKeepAt` 0.6; without Jev the checking model does it), a fact a memory already has is not saved twice, and the chat's note is brought up to date. `/jevg memory save` does it now.
+- **The model's own calls** through the memory MCP server (`save_fact`, `search`): allowed (`memory.modelTools`), except `recall` once the mod has recalled for the chat (`memory.modelRecall`, off).
+- **Failures cost one timeout:** `memory.timeoutMs` (4 s), then the memory is left alone for a minute. A service that does not answer is started (`scripts/mnema-local.sh start`, at most every 10 minutes).
+
+Check it: `/jevg memory` shows both layers for the chat's folder, `/jevg memory test [task]` shows what a chat about that task would get. The **Memory** tab of the UI lists "About me" and every project's memory: facts by type, importance and date, the chats' notes, older memories of a project, related projects; a fact can be added, edited, pinned, moved to another memory or removed there.
+
+Why directly and not through MCP: until 0.3.16 the mod called the MCP server's tools through the engine. In auto permission mode the classifier refused a third of those calls, and in four weeks not one recall the mod made that way brought a fact into a chat, though the memory held them.
 
 Set up locally (once):
 
@@ -129,7 +138,7 @@ scripts/mnema-local.sh start
 claude mcp add mnema-memory --scope user -- ~/Documents/mnema-mcp/.venv/bin/mnema-mcp
 ```
 
-Then `/jevg memory on`. `mnema-mcp doctor` checks the chain; `node scripts/monitor.mjs` reports recalls, facts added, failures and the model's own memory calls (section 6). `scripts/mnema-local.sh` runs the server on real models through OpenRouter when `.openrouter_key` (or `OPENROUTER_API_KEY`) exists: `recall` then matches by meaning (about 0.5 s; texts of facts and tasks go to OpenRouter). Without a key it falls back to the offline mock, where `recall` matches only shared words. After switching, `scripts/mnema-local.sh reembed` embeds the facts saved earlier.
+The second command writes the key file the mod reads too (`memory.keyFile`, `~/.config/mnema-mcp/config.toml`); the third gives the model its own memory tools and is optional. `scripts/mnema-local.sh` runs the service on real embeddings through OpenRouter when `.openrouter_key` (or `OPENROUTER_API_KEY`) is present, else offline.
 
 ## UI
 

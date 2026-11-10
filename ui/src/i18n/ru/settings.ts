@@ -410,14 +410,58 @@ export default {
     'Вывод обрезается как лог, только если вероятность «это лог» по оценке Jev не ниже этого значения. Замер 7 октября: реальные выводы скриптов и отчётов получили не больше 0,29, реальные логи (push, деплой, docker compose, dev-сервер) — 0,55–0,80. Выше — безопаснее и реже.',
   "Long-term memory":
     "Долговременная память",
-  "A memory server (Mnema, through its MCP) keeps what earlier chats decided and learned. A new chat and every subagent start cold and find such things again by reading files, and reading is most of the bill. The mod asks the memory itself, without a model step, and adds a few hundred tokens of notes to the first task of a chat and to subagent tasks; with nothing relevant stored it adds nothing. The handoff brief is saved to the memory. Turn on and check: /jevg memory on, /jevg memory.":
-    "Сервер памяти (Mnema, через свой MCP) хранит то, что решили и узнали прошлые чаты. Новый чат и каждый субагент начинают с нуля и находят это заново, читая файлы, а чтение — основная часть счёта. Мод сам спрашивает память, без шага модели, и добавляет несколько сотен токенов заметок к первой задаче чата и к задачам субагентов; если ничего подходящего нет, ничего не добавляет. Бриф переноса сохраняется в память. Включить и проверить: /jevg memory on, /jevg memory.",
+  "The memory (the Mnema service) has two layers. “About me” is who you are and how you want to be worked with: it goes into every chat in every project. A project’s memory holds its decisions, conventions and traps and a note of each chat on it; a task that reaches into another project gets that project’s notes too. The mod reads and writes the service itself, without a model step: notes go to the first task of a chat and to subagent tasks, and what is durable in a dialog is saved by Haiku with a check by Jev. See it all on the Memory tab; check a chat with /jevg memory and /jevg memory test.":
+    "У памяти (сервис Mnema) два слоя. «Обо мне» — кто вы и как с вами работать: попадает в каждый чат в любом проекте. Память проекта хранит его решения, соглашения и ловушки и заметку о каждом чате по нему; задача, которая касается другого проекта, получает заметки и оттуда. Мод читает и пишет в сервис сам, без шага модели: заметки идут к первой задаче чата и к задачам субагентов, а то, что в диалоге надолго, сохраняет Haiku с проверкой Jev. Всё видно на вкладке «Память»; проверить чат — /jevg memory и /jevg memory test.",
   "Off: the mod does not call the memory and the model is refused its tools (a stray call costs nothing more than the refusal).":
     "Выключена — мод не обращается к памяти, а модели в её инструментах отказывается (случайный вызов стоит не больше отказа).",
+  "Memory service address":
+    "Адрес сервиса памяти",
+  "Where the Mnema service answers. Empty: base_url from the key file below, else http://127.0.0.1:8787.":
+    "Где отвечает сервис Mnema. Пусто — base_url из файла ключа ниже, иначе http://127.0.0.1:8787.",
+  "Memory service key file":
+    "Файл ключа сервиса памяти",
+  "The mnema-mcp config (api_key = \"…\") or a file with the bare key; ~ is the home folder. The MNEMA_API_KEY environment variable wins.":
+    "Конфиг mnema-mcp (api_key = \"…\") или файл с одним ключом; ~ — домашняя папка. Переменная окружения MNEMA_API_KEY важнее.",
+  "Name of the “About me” memory":
+    "Имя памяти «Обо мне»",
+  "The memory about you is dev.<this name>. Empty: your login name, as the mnema-mcp server names it too.":
+    "Память о вас — это dev.<это имя>. Пусто — ваше имя входа в систему; так же её называет и сервер mnema-mcp.",
+  "Notes about me at most":
+    "Заметок обо мне не больше",
+  "How many notes from “About me” a chat gets: what is pinned or important first, then what the task brings up, then the newest preferences. 0: none.":
+    "Сколько заметок из «Обо мне» получает чат: сначала закреплённые и важные, потом то, чего касается задача, потом самые новые предпочтения. 0 — ни одной.",
+  "Notes of the chats":
+    "Заметки о чатах",
+  "Each chat keeps one short note in its project’s memory: what it did, decided and left open. The next chat on the project gets the last three, so it knows where things stand.":
+    "Каждый чат держит в памяти своего проекта одну короткую заметку: что сделано, что решено и что осталось открытым. Следующий чат по проекту получает три последние и знает, на чём остановились.",
+  "Related projects":
+    "Связанные проекты",
+  "A task that names another project the memory knows gets that project’s notes too, and the two become related. A related project that the task does not name is read only when Jev is sure the task needs it. Relations are shown and edited on the Memory tab.":
+    "Задача, которая называет другой известный памяти проект, получает заметки и из него, а проекты становятся связанными. Связанный проект, который задача не называет, читается, только когда Jev уверен, что он нужен. Связи видны и правятся на вкладке «Память».",
+  "Related projects per task at most":
+    "Связанных проектов на задачу не больше",
+  "How many other projects one task may bring notes from.":
+    "Из скольких других проектов одна задача может получить заметки.",
+  "Threshold for a related project":
+    "Порог для связанного проекта",
+  "How sure Jev must be (0–1) that a task needs a related project it does not name.":
+    "Насколько Jev должен быть уверен (0–1), что задаче нужен связанный проект, который она не называет.",
+  "Jev (yes/no per fact)":
+    "Jev (да/нет по каждому факту)",
+  "The checking model":
+    "Проверяющая модель",
+  "Who checks the facts":
+    "Кто проверяет факты",
+  "Jev answers one yes/no per offered fact: is it supported by the dialog, durable, and not just progress. Fast and cheap; without a key or an answer the checking model below does it.":
+    "Jev отвечает да/нет по каждому предложенному факту: подтверждается ли он диалогом, надолго ли он и не просто ли это ход работы. Быстро и дёшево; без ключа или ответа это делает проверяющая модель ниже.",
+  "Threshold for keeping a fact":
+    "Порог сохранения факта",
+  "How sure Jev must be (0–1) to keep an offered fact. Higher: fewer, surer facts.":
+    "Насколько Jev должен быть уверен (0–1), чтобы оставить предложенный факт. Выше — фактов меньше, но они надёжнее.",
   "MCP server name":
     "Имя MCP-сервера",
-  "The name the memory MCP server is added under (claude mcp add <name> ...).":
-    "Имя, под которым добавлен MCP-сервер памяти (claude mcp add <имя> ...).",
+  "The name the memory MCP server is added under (claude mcp add <name> ...): the tools the model itself may call (save_fact, search). The mod’s own reads and writes go to the service directly, not through MCP.":
+    "Имя, под которым добавлен MCP-сервер памяти (claude mcp add <имя> ...): это инструменты, которые вызывает сама модель (save_fact, search). Сам мод читает и пишет в сервис напрямую, не через MCP.",
   "Notes for the first task of a chat":
     "Заметки к первой задаче чата",
   "The first prompt of a chat that states a task gets the notes on it, once per chat. Not when a capsule from an old chat is attached: it already carries the context.":
@@ -430,22 +474,22 @@ export default {
     "Задача субагента от",
   "Shorter subagent prompts (a quick lookup) get no notes.":
     "Более короткие промпты субагентов (быстрый поиск) заметок не получают.",
-  "Save the handoff brief":
-    "Сохранять бриф переноса",
-  "The brief /jevg getctx and /jevg fresh write (goal, decisions and why, what is open) is saved to the project memory in the background.":
-    "Бриф, который пишут /jevg getctx и /jevg fresh (цель, решения и почему, что открыто), сохраняется в память проекта в фоне.",
+  "Save at a handoff":
+    "Сохранять при переносе",
+  "When /jevg getctx or /jevg fresh ends the work in a chat, the turns not read yet are read at once: their facts and the chat’s note are saved in the background.":
+    "Когда /jevg getctx или /jevg fresh завершает работу в чате, ещё не прочитанные ходы читаются сразу: их факты и заметка о чате сохраняются в фоне.",
   "Save facts from the dialog":
     "Сохранять факты из диалога",
   "The mod reads what you typed and the model answered (never tool output) every few turns and after a quiet stretch, and saves the few durable facts in it: decisions and their reasons, conventions, traps. A second pass drops the doubtful ones; most readings save nothing. Saved facts carry the tag auto. /jevg memory save does it now.":
     "Мод читает то, что вы писали и что отвечала модель (вывод инструментов не читается), раз в несколько ходов и после паузы, и сохраняет немногие долгие факты: решения и их причины, правила, ловушки. Второй проход отбрасывает сомнительные; чаще всего сохранять нечего. У сохранённых фактов тег auto. /jevg memory save делает это сразу.",
   "Model that reads the dialog":
     "Модель, читающая диалог",
-  "Reads the turns (most of the tokens) and offers facts. Haiku 5.5 is enough: the checking pass below filters its mistakes.":
-    "Читает ходы (основная часть токенов) и предлагает факты. Haiku 5.5 достаточно: проверяющий проход ниже отсеет её ошибки.",
-  "Model that checks the facts":
-    "Модель, проверяющая факты",
-  "Sees only the few offered facts and decides which to keep, so the better model costs little here. Runs only when something was offered.":
-    "Видит только немногие предложенные факты и решает, какие оставить, поэтому лучшая модель стоит здесь мало. Работает, только если что-то предложено.",
+  "Reads the turns (most of the tokens), offers facts for both layers and writes the chat’s note. Haiku 5.5: the check below filters its mistakes.":
+    "Читает ходы (основная часть токенов), предлагает факты для обоих слоёв и пишет заметку о чате. Haiku 5.5: её ошибки отсеивает проверка ниже.",
+  "Checking model when Jev is away":
+    "Проверяющая модель, когда Jev недоступен",
+  "Checks the offered facts when the check is set to the model, or Jev has no key or does not answer. Sees only the few offered facts; runs only when something was offered.":
+    "Проверяет предложенные факты, когда проверка поручена модели либо у Jev нет ключа или он не отвечает. Видит только немногие предложенные факты; запускается, только если что-то предложено.",
   "Read the dialog every":
     "Читать диалог каждые",
   "Read after a quiet stretch of":

@@ -3,6 +3,7 @@ export default {
   Overview: 'Обзор',
   Savings: 'Экономия',
   Projects: 'Проекты',
+  Memory: 'Память',
   Settings: 'Настройки',
   Agents: 'Агенты',
   Skills: 'Навыки',

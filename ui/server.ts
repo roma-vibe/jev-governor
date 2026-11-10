@@ -24,9 +24,10 @@ import { computeSavings, familyOf, SPEND_SOURCES, usageCost, type SavingEvent, t
 import type { AgentRecord, DraftRecord, GovernorConfig, LedgerEntry, MergeRequest, SkillRecord } from '../hooks/lib/types.ts';
 import { pricable } from './lib/pricable.ts';
 import { afterReset, readReset } from './lib/reset.ts';
+import { createMemory } from './lib/memory.ts';
 import { createProjects, entriesOfProject } from './lib/projects.ts';
 
-const VERSION = '0.3.15';
+const VERSION = '0.3.16';
 const UI_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(UI_DIR);
 const DIST = path.join(UI_DIR, 'dist');
@@ -906,6 +907,8 @@ const projects = createProjects({
   HttpError,
 });
 
+const memory = createMemory({ data: DATA, home: HOME, loadConfig, loadLedger, readJson, writeJson, withLock, HttpError });
+
 // ------------------------------------------------------------------- API --
 
 async function readBody(req: IncomingMessage): Promise<Json> {
@@ -1061,6 +1064,11 @@ async function api(req: IncomingMessage, res: ServerResponse, segments: string[]
       return send(res, 200, await mutate(() => acceptDraft(id, body)));
     }
     return notFound();
+  }
+
+  if (resource === 'memory') {
+    const { status, body } = await memory.handle({ method, segments: segments.slice(2), query, readBody: () => readBody(req) });
+    return send(res, status, body);
   }
 
   if (resource === 'projects') {

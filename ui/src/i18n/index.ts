@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import app from './ru/app.ts';
 import common from './ru/common.ts';
 import journal from './ru/journal.ts';
+import memory from './ru/memory.ts';
 import overview from './ru/overview.ts';
 import people from './ru/people.ts';
 import projects from './ru/projects.ts';
@@ -17,7 +18,7 @@ export const LANGS: { value: Lang; label: string }[] = [
 ];
 
 /** English text is the key; this table holds the Russian text for it. */
-const RU: Record<string, string> = { ...common, ...app, ...settings, ...overview, ...savings, ...projects, ...people, ...journal };
+const RU: Record<string, string> = { ...common, ...app, ...settings, ...overview, ...savings, ...projects, ...people, ...journal, ...memory };
 
 const STORAGE_KEY = 'jev-governor.lang';
 

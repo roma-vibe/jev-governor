@@ -63,6 +63,49 @@ let mcpReply: (tool: string, args?: Record<string, unknown>) => Promise<{ conten
   isError: true,
 });
 const processRuns: string[][] = [];
+/** The memory service (Mnema) the mod speaks to over HTTP: its facts by memory id, and the requests it got. */
+type FakeFact = { id: string; text: string; kind: string; tags: string[]; status: string; pinned: boolean; importance: { level: string }; createdAt: string; updatedAt: string };
+const mnemaFacts = new Map<string, FakeFact[]>();
+const mnemaCalls: { method: string; path: string; auth?: string; body?: any }[] = [];
+let mnemaUp = true;
+let mnemaSeq = 0;
+function addFact(memory: string, text: string, tags: string[], more: { importance?: string; updatedAt?: string; kind?: string } = {}): FakeFact {
+  const at = more.updatedAt ?? `2026-11-0${1 + (mnemaSeq % 8)}T12:00:0${mnemaSeq % 10}Z`;
+  const fact: FakeFact = { id: `f${++mnemaSeq}`, text, kind: more.kind ?? 'project', tags, status: 'active', pinned: false, importance: { level: more.importance ?? 'normal' }, createdAt: at, updatedAt: at };
+  mnemaFacts.set(memory, [...(mnemaFacts.get(memory) ?? []), fact]);
+  return fact;
+}
+function mnemaFake(url: string, init: { method?: string; headers?: Record<string, string>; body?: string } = {}): { status: number; ok: boolean; text: string } {
+  if (!mnemaUp) throw new Error('fetch failed: connect ECONNREFUSED 127.0.0.1:8787');
+  const method = init.method ?? 'GET';
+  const path = decodeURIComponent(new URL(url).pathname);
+  const body = init.body ? JSON.parse(init.body) : undefined;
+  mnemaCalls.push({ method, path, auth: init.headers?.authorization, body });
+  const reply = (status: number, data?: unknown) => ({ status, ok: status < 300, text: data === undefined ? '' : JSON.stringify(data) });
+  const parts = path.split('/').filter(Boolean); // v1, users, <id>, ...
+  if (parts.length === 2 && method === 'GET') return reply(200, { users: [...mnemaFacts.keys()], total: mnemaFacts.size });
+  const id = parts[2]!;
+  const list = mnemaFacts.get(id) ?? [];
+  const active = list.filter((f) => f.status === 'active');
+  if (parts.length === 3) return reply(200, { user: id, stats: { factsActive: active.length, factsTotal: list.length, messages: 0, threads: 0 }, pendingJobs: 0 });
+  if (parts[3] === 'recall') return reply(200, { facts: active });
+  if (parts[3] === 'facts' && parts.length === 4 && method === 'GET') return reply(200, { facts: active, total: active.length });
+  if (parts[3] === 'facts' && parts.length === 4 && method === 'POST') {
+    const fact = addFact(id, body.text, body.tags ?? [], { importance: body.importance, kind: body.kind });
+    return reply(201, fact);
+  }
+  const fact = list.find((f) => f.id === parts[4]);
+  if (!fact) return reply(404, { error: { message: 'no such fact' } });
+  if (method === 'PATCH') {
+    Object.assign(fact, body, body.importance ? { importance: { level: body.importance } } : {});
+    return reply(200, fact);
+  }
+  if (method === 'DELETE') {
+    fact.status = 'archived';
+    return reply(204);
+  }
+  return reply(404, { error: { message: 'not found' } });
+}
 /** The turns the session reports. */
 let sessionTurns = 0;
 /** Every request body sent to Jev. */
@@ -91,6 +134,9 @@ let merges = 0;
 let mergeReply = '{"agents": [], "skills": []}';
 let extractReply = '{"facts":[]}';
 let criticReply = '{"keep":[0]}';
+/** Memory: how sure Jev is that a candidate fact is worth keeping, and that a task needs a related project. */
+let jevKeep = 0.9;
+let jevRel = 0.1;
 const timerMs = new WeakMap<() => void, number>();
 const extractCalls: { system?: string; prompt?: string; model?: string }[] = [];
 /** Compaction: drop whole calls too, not only their outputs. */
@@ -124,6 +170,9 @@ function jevReply(body: string): string {
     else if (name.startsWith('result_')) answers[name] = { noul: 0.1 };
     else if (name.startsWith('call_')) answers[name] = { noul: dropCalls ? 0.1 : 0.9 };
     else if (name.startsWith('need_t')) answers[name] = { noul: name.endsWith('1') ? 0.9 : 0.4 };
+    // Memory: the check of a candidate fact, and whether a task needs a related project.
+    else if (name.startsWith('fact_')) answers[name] = { noul: jevKeep };
+    else if (name.startsWith('rel_')) answers[name] = { noul: jevRel };
     else answers[name] = { noul: 0.1 };
   }
   return JSON.stringify({ answers, usage: { cost: 0.0001 } });
@@ -167,7 +216,8 @@ const $ = {
     },
   },
   http: {
-    fetch: async (_url: string, init: { body: string }) => {
+    fetch: async (url: string, init: { body: string; method?: string; headers?: Record<string, string> }) => {
+      if (url.startsWith('http://127.0.0.1:8787')) return mnemaFake(url, init);
       bodies.push(init.body);
       if (jevDown) return { status: 503, ok: false, text: 'down' };
       if (jevFlaky > 0) {
@@ -244,7 +294,7 @@ const $ = {
     },
     // Drafting a specialist takes a while: parallel spawns overlap.
     complete: async (input: { system?: string; prompt?: string; model?: string }) => {
-      if (input.system?.includes('maintain the long-term memory')) {
+      if (input.system?.includes("maintain a developer's long-term memory")) {
         extractCalls.push(input);
         return { isAnswered: true, text: extractReply };
       }
@@ -1535,16 +1585,8 @@ describe('jev-governor hooks against a fake engine', () => {
     expect(usage[0].usageFrom).toBe('steps');
   });
   describe('long-term memory (memory.*)', () => {
-    const FACTS = {
-      content: [{ type: 'text', text: 'rendered' }],
-      isError: false,
-      structuredContent: {
-        memories: [
-          { scope: 'project', facts: [{ id: 'f1', text: 'Payments retry through the queue in src/pay/retry.ts', type: 'decision', status: 'active' }], open_questions: [], error: null },
-          { scope: 'personal', facts: [], open_questions: [], error: null },
-        ],
-      },
-    };
+    const PROJECT = 'repo.github.com.acme.app';
+    const ME = 'dev.r';
     const setMemory = async (memory: Record<string, unknown>): Promise<void> => {
       const config = JSON.parse(files.get(`${DATA}/config.json`) ?? '{}');
       config.memory = { ...config.memory, ...memory };
@@ -1553,6 +1595,21 @@ describe('jev-governor hooks against a fake engine', () => {
     };
     const ledgerOf = (id: string): Record<string, any>[] =>
       [...files.entries()].filter(([p]) => p.endsWith(`${id}.jsonl`)).flatMap(([, t]) => t.split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+    const cmd = async (args: string): Promise<string> => (await emit('command.run', { command: 'jevg', args }, async () => ({ text: '' }))).text;
+    /** A clean service with the key file and the project's git remote in place. */
+    const service = (): void => {
+      mnemaFacts.clear();
+      mnemaCalls.length = 0;
+      mnemaUp = true;
+      jevKeep = 0.9;
+      jevRel = 0.1;
+      env.set('USER', 'r');
+      files.set(`${HOME}/.config/mnema-mcp/config.toml`, 'api_key = "mn_test_0123456789abcdef"\nbase_url = "http://127.0.0.1:8787"\n');
+      files.set('/work/app/.git/config', '[core]\n\tbare = false\n[remote "origin"]\n\turl = git@github.com:Acme/App.git\n');
+      files.delete(`${DATA}/memory/projects.json`);
+    };
+    const texts = (id: string): string[] => (mnemaFacts.get(id) ?? []).filter((f) => f.status === 'active').map((f) => f.text);
+    const writes = (): { method: string; path: string }[] => mnemaCalls.filter((c) => c.method !== 'GET' && !c.path.endsWith('/recall'));
 
     describe('autosave from the dialog', () => {
       const turn = (user: string, answer: string) => [
@@ -1560,17 +1617,14 @@ describe('jev-governor hooks against a fake engine', () => {
         { role: 'assistant', text: answer, toolUses: [] },
       ];
       const GOOD = 'We keep the router state per chat in route.json because a resumed chat must not lose its cache plan.';
-      let saved: Record<string, unknown>[] = [];
-      const memoryServer = async (tool: string, args?: Record<string, unknown>) => {
-        if (tool === 'save_fact') saved.push(args ?? {});
-        return { content: [{ type: 'text', text: '{}' }], isError: false, structuredContent: tool === 'list_facts' ? { memories: [{ scope: 'project', facts: [{ id: 'f1', text: 'Mod tests run with npm test (vitest).', status: 'active' }] }] } : undefined };
-      };
+      const STORED = 'The mod has its own checks: run the vitest suite before every commit.';
+      const NOTE = 'The chat settled where the router state lives (route.json, per chat) and wrote it into the docs; nothing is open.';
       const setup = async (id: string, extra: Record<string, unknown> = {}) => {
+        service();
+        addFact(PROJECT, STORED, ['workflow']);
         await setMemory({ enabled: true, autoSave: true, autoSaveEveryTurns: 2, ...extra });
-        mcpReply = memoryServer;
-        saved = [];
         extractCalls.length = 0;
-        extractReply = JSON.stringify({ facts: [{ text: GOOD, type: 'decision', scope: 'project', importance: 'normal' }] });
+        extractReply = JSON.stringify({ facts: [{ text: GOOD, type: 'decision', scope: 'project', importance: 'normal' }], session: NOTE });
         criticReply = '{"keep":[0]}';
         await startSession(id);
         messages = [
@@ -1593,33 +1647,58 @@ describe('jev-governor hooks against a fake engine', () => {
         }
       };
 
-      it('every few turns: the turns are read, a fact passes the checking pass and is saved with the auto tag', async () => {
+      it('every few turns: Haiku reads the turns, Jev checks the fact, it is saved to the project with the auto tag, and the chat gets its note', async () => {
         await setup('as-1');
         await finishTurn('t1');
         await flush();
-        expect(saved).toHaveLength(0);
+        expect(writes()).toHaveLength(0);
         await finishTurn('t2');
         await flush();
-        expect(saved).toHaveLength(1);
-        expect(saved[0]).toMatchObject({ fact: GOOD, type: 'decision', scope: 'project', tags: ['auto'] });
-        expect(extractCalls).toHaveLength(2);
-        expect(extractCalls[0]!.prompt).toContain('Mod tests run with npm test');
-        expect(ledgerOf('as-1').find((e) => e.memory?.action === 'extract')).toMatchObject({ memory: { ok: true, facts: 1, offered: 1, turns: 2 } });
+        expect(texts(PROJECT)).toContain(GOOD);
+        const saved = mnemaFacts.get(PROJECT)!.find((f) => f.text === GOOD)!;
+        expect(saved).toMatchObject({ kind: 'project', tags: ['decision', 'auto'], importance: { level: 'normal' } });
+        // One model call (the reading); the check was Jev's.
+        expect(extractCalls).toHaveLength(1);
+        expect(extractCalls[0]!.model).toBe('claude-haiku-5-5');
+        expect(extractCalls[0]!.prompt).toContain(STORED);
+        expect(bodies.some((b) => b.includes('fact_0'))).toBe(true);
+        // The chat's note: one fact with the session tag and the chat's own tag.
+        const note = mnemaFacts.get(PROJECT)!.find((f) => f.tags.includes('session'))!;
+        expect(note.text).toBe(NOTE);
+        expect(note.tags.some((t) => t.startsWith('chat-'))).toBe(true);
+        expect(ledgerOf('as-1').find((e) => e.memory?.action === 'extract')).toMatchObject({ memory: { ok: true, facts: 1, offered: 1, turns: 2, project: 1, sessions: 1, memory: PROJECT } });
         // The same turns are not read again.
         await finishTurn('t3');
         await finishTurn('t4');
         await flush();
-        expect(saved).toHaveLength(1);
+        expect(extractCalls).toHaveLength(1);
       });
 
-      it('the checking pass can drop everything, and then nothing is saved', async () => {
+      it('Jev can drop everything; the note of the chat is still kept', async () => {
         await setup('as-2');
-        criticReply = '{"keep":[]}';
+        jevKeep = 0.2;
         await finishTurn('t1');
         await finishTurn('t2');
         await flush();
-        expect(saved).toHaveLength(0);
+        expect(texts(PROJECT)).not.toContain(GOOD);
+        expect(texts(PROJECT)).toContain(NOTE);
         expect(ledgerOf('as-2').find((e) => e.memory?.action === 'extract')).toMatchObject({ memory: { ok: true, facts: 0, offered: 1 } });
+      });
+
+      it('without Jev the checking model decides', async () => {
+        await setup('as-2b');
+        jevDown = true;
+        try {
+          criticReply = '{"keep":[]}';
+          await finishTurn('t1');
+          await finishTurn('t2');
+          await flush();
+          expect(extractCalls).toHaveLength(2);
+          expect(extractCalls[1]!.model).toBe('claude-haiku-5-5');
+          expect(texts(PROJECT)).not.toContain(GOOD);
+        } finally {
+          jevDown = false;
+        }
       });
 
       it('a fact that is progress, a repeat of a stored one, or holds a secret never reaches the memory', async () => {
@@ -1627,27 +1706,69 @@ describe('jev-governor hooks against a fake engine', () => {
         extractReply = JSON.stringify({
           facts: [
             { text: 'Currently the autosave work is in progress on the agents-dedupe branch of this repo.', type: 'context' },
-            { text: 'Mod tests run with npm test (vitest).', type: 'workflow' },
+            { text: STORED, type: 'workflow' },
             { text: 'The deploy key is sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789 for the release job.', type: 'reference' },
           ],
         });
         await finishTurn('t1');
         await finishTurn('t2');
         await flush();
-        expect(saved).toHaveLength(0);
-        expect(extractCalls).toHaveLength(1); // nothing left for the checking pass
+        expect(writes()).toHaveLength(0);
+        expect(extractCalls).toHaveLength(1);
+      });
+
+      it('each fact goes to its layer: the person\'s, this project\'s, or another known project\'s', async () => {
+        await setup('as-layers');
+        const PERSONAL = 'The developer wants answers in Russian and finished work committed without being asked first.';
+        const OTHER = 'The billing service signs webhooks with the key in vault path kv/billing/webhook, not an env variable.';
+        const UNKNOWN = 'The mailer project retries a failed send three times before giving up on the message.';
+        mnemaFacts.set('repo.github.com.acme.billing', []);
+        files.set(`${DATA}/memory/projects.json`, JSON.stringify({ projects: [{ id: 'repo.github.com.acme.billing', name: 'billing', roots: ['/work/billing'] }] }));
+        extractReply = JSON.stringify({
+          facts: [
+            { text: PERSONAL, type: 'preference', scope: 'personal', importance: 'high' },
+            { text: GOOD, type: 'decision', scope: 'project' },
+            { text: OTHER, type: 'reference', scope: 'project', project: 'billing' },
+            { text: UNKNOWN, type: 'gotcha', scope: 'project', project: 'unknown-project' },
+          ],
+          session: '',
+        });
+        await setMemory({ autoSaveMaxFacts: 5 });
+        await finishTurn('t1');
+        await finishTurn('t2');
+        await flush();
+        expect(extractCalls[0]!.prompt).toContain('Other known projects: billing');
+        expect(texts(ME)).toEqual([PERSONAL]);
+        expect(mnemaFacts.get(ME)![0]).toMatchObject({ kind: 'preference', tags: ['preference', 'auto'], importance: { level: 'high' } });
+        expect(texts('repo.github.com.acme.billing')).toEqual([OTHER]);
+        // A project the memory does not know is not a target: the fact stays with this project.
+        expect(texts(PROJECT)).toEqual(expect.arrayContaining([GOOD, UNKNOWN]));
+        expect(ledgerOf('as-layers').find((e) => e.memory?.action === 'extract')).toMatchObject({ memory: { facts: 4, personal: 1, project: 2, related: 1 } });
+      });
+
+      it('the chat keeps one note and brings it up to date', async () => {
+        await setup('as-note');
+        expect(await cmd('memory save')).toContain(NOTE);
+        const LATER = 'The chat settled the router state (route.json per chat), documented it, and began the cache plan checks; those are open.';
+        extractReply = JSON.stringify({ facts: [], session: LATER });
+        messages = [...messages, ...turn('теперь давай добавим проверки на план кэша после возобновления чата', 'Начал: добавил первую проверку на восстановление плана кэша из route.json.')];
+        await cmd('memory save');
+        const notes = mnemaFacts.get(PROJECT)!.filter((f) => f.tags.includes('session') && f.status === 'active');
+        expect(notes.map((f) => f.text)).toEqual([LATER]);
+        // The model was shown the note so far.
+        expect(extractCalls.at(-1)!.prompt).toContain(NOTE);
       });
 
       it('the model failing keeps the turns unread: nothing is lost, and the next try reads them', async () => {
         await setup('as-4');
         const real = $.model.complete;
         $.model.complete = (async () => ({ isAnswered: false, reason: 'timeout' })) as never;
-        const first = await emit('command.run', { command: 'jevg', args: 'memory save' }, async () => ({ text: '' }));
+        const first = await cmd('memory save');
         $.model.complete = real;
-        expect(first.text).toContain('Модель не ответила');
-        const second = await emit('command.run', { command: 'jevg', args: 'memory save' }, async () => ({ text: '' }));
-        expect(second.text).toContain('Сохранено фактов: 1');
-        expect(saved).toHaveLength(1);
+        expect(first).toContain('Модель не ответила');
+        const second = await cmd('memory save');
+        expect(second).toContain('Сохранено фактов: 1');
+        expect(texts(PROJECT)).toContain(GOOD);
       });
 
       it('off, or an excluded project: nothing is read', async () => {
@@ -1656,71 +1777,76 @@ describe('jev-governor hooks against a fake engine', () => {
         await finishTurn('t2');
         await flush();
         expect(extractCalls).toHaveLength(0);
-        const manual = await emit('command.run', { command: 'jevg', args: 'memory save' }, async () => ({ text: '' }));
-        expect(manual.text).toContain('выключено');
+        expect(await cmd('memory save')).toContain('выключено');
       });
 
       it('a quiet stretch also saves, once, when fewer turns than the limit were done', async () => {
         await setup('as-6', { autoSaveEveryTurns: 10 });
         await finishTurn('t1');
         await flush(Infinity); // the idle timer fires
-        expect(saved).toHaveLength(1);
+        expect(texts(PROJECT)).toContain(GOOD);
       });
     });
 
-    it('on: a memory server still connecting is waited for, not given up on for the chat', async () => {
-      await setMemory({ enabled: true });
-      let attempts = 0;
-      mcpReply = async () => {
-        if (++attempts <= 2) throw new Error('$.mcp.call: no connected MCP tool "recall" on a server named "mnema-memory"');
-        return FACTS;
-      };
-      await startSession('mem-connecting');
-      sessionTurns = 0;
-      const result = await emit('prompt.submit', { text: 'почини падающий тест в модуле оплаты' });
-      expect(attempts).toBe(3);
-      expect(result.context).toHaveLength(1);
-      expect(ledgerOf('mem-connecting').find((e) => e.kind === 'memory')).toMatchObject({ memory: { action: 'recall', ok: true, facts: 1 } });
-    });
-
-    it('off: no recall, and the model is refused the memory tools', async () => {
+    it('off: no recall, and the model is refused the memory tools; a chat with the mod off is left alone', async () => {
+      service();
       await setMemory({ enabled: false });
       await startSession('mem-off');
-      mcpCalls.length = 0;
-      const result = await emit('prompt.submit', { text: 'почини падающий тест в модуле оплаты' });
+      const result = await emit('prompt.submit', { text: 'почини падающую проверку в модуле оплаты' });
       expect(result.context).toBeUndefined();
-      expect(mcpCalls).toHaveLength(0);
+      expect(mnemaCalls).toHaveLength(0);
       const check = await emit('tool.check', { tool: 'mcp__mnema-memory__save_fact', input: {} }, async () => ({ decision: 'ask' }));
       expect(check.decision).toBe('deny');
       expect(check.reason).toContain('/jevg memory on');
       // Other MCP tools are not the mod's business.
       expect((await emit('tool.check', { tool: 'mcp__other__x', input: {} }, async () => ({ decision: 'ask' }))).decision).toBe('ask');
+      // /jevg chat off: the mod does nothing here, so the model's memory tools go their usual way.
+      await cmd('chat off');
+      expect((await emit('tool.check', { tool: 'mcp__mnema-memory__save_fact', input: {} }, async () => ({ decision: 'ask' }))).decision).toBe('ask');
+      await cmd('chat on');
     });
 
-    it('on: the first real task of a chat gets the notes as context, once; the tools are allowed', async () => {
+    it('on: the first real task of a chat gets both layers and the last chats\' notes, once; read straight from the service', async () => {
+      service();
+      addFact(PROJECT, 'Payments retry through the queue in src/pay/retry.ts', ['decision']);
+      addFact(PROJECT, 'The last chat moved the retry schedule into config and left the backoff checks open.', ['context', 'session', 'chat-older1'], { updatedAt: '2026-11-01T10:00:00Z' });
+      addFact(ME, 'The developer wants answers in Russian and work committed without asking.', ['preference'], { importance: 'high' });
+      addFact(ME, 'A stray note about one codebase that was saved as personal by mistake.', ['gotcha']);
       await setMemory({ enabled: true });
-      mcpReply = async () => FACTS;
       await startSession('mem-on');
       sessionTurns = 0;
-      mcpCalls.length = 0;
+      mnemaCalls.length = 0;
       // A reply too short to be a task asks nothing.
       expect((await emit('prompt.submit', { text: 'да' })).context).toBeUndefined();
+      expect(mnemaCalls).toHaveLength(0);
+      const result = await emit('prompt.submit', { text: 'почини падающую проверку в модуле оплаты' });
+      // The project is named by its git remote, the person by the login; the key rides as a bearer.
+      expect(mnemaCalls.map((c) => c.path)).toEqual(expect.arrayContaining([`/v1/users/${PROJECT}/recall`, `/v1/users/${ME}/recall`]));
+      expect(mnemaCalls.every((c) => c.auth === 'Bearer mn_test_0123456789abcdef')).toBe(true);
       expect(mcpCalls).toHaveLength(0);
-      const result = await emit('prompt.submit', { text: 'почини падающий тест в модуле оплаты' });
-      expect(mcpCalls).toHaveLength(1);
-      expect(mcpCalls[0]).toMatchObject({ server: 'mnema-memory', tool: 'recall', args: { detail: 'brief', scope: 'both' } });
       expect(result.context).toHaveLength(1);
-      expect(result.context[0]).toContain('src/pay/retry.ts');
-      expect(result.context[0]).toContain('<memory source="earlier sessions">');
-      expect(result.text).toBe('почини падающий тест в модуле оплаты');
+      const block: string = result.context[0];
+      expect(block).toContain('<memory source="earlier sessions">');
+      expect(block).toContain('About the user');
+      expect(block).toContain('answers in Russian');
+      expect(block).toContain('This project (app):');
+      expect(block).toContain('src/pay/retry.ts');
+      expect(block).toContain('Earlier chats on this project');
+      expect(block).toContain('2026-11-01: The last chat moved the retry schedule');
+      // A trap about one codebase that was filed under the person is not shown in every project.
+      expect(block).not.toContain('A stray note');
+      // The person's notes come before the project's.
+      expect(block.indexOf('About the user')).toBeLessThan(block.indexOf('This project'));
+      expect(result.text).toBe('почини падающую проверку в модуле оплаты');
       // Once per conversation.
-      expect((await emit('prompt.submit', { text: 'теперь добавь тест на повтор платежа' })).context).toBeUndefined();
-      expect(mcpCalls).toHaveLength(1);
-      expect(ledgerOf('mem-on').find((e) => e.kind === 'memory')).toMatchObject({ applied: true, memory: { action: 'recall', for: 'prompt', ok: true, facts: 1 } });
+      const before = mnemaCalls.length;
+      expect((await emit('prompt.submit', { text: 'теперь добавь проверку на повтор платежа' })).context).toBeUndefined();
+      expect(mnemaCalls).toHaveLength(before);
+      expect(ledgerOf('mem-on').find((e) => e.kind === 'memory')).toMatchObject({
+        applied: true,
+        memory: { action: 'recall', for: 'prompt', ok: true, personal: 1, project: 1, sessions: 1, memory: PROJECT },
+      });
       expect((await emit('tool.check', { tool: 'mcp__mnema-memory__save_fact', input: {} }, async () => ({ decision: 'ask' }))).decision).toBe('allow');
-      // The mod's own recall passes the same check and is not the model's: allowed.
-      const own = await emit('tool.check', { tool: 'mcp__mnema-memory__recall', input: {} }, async () => ({ decision: 'ask' }), { plugin: 'jev-governor' });
-      expect(own.decision).toBe('allow');
       // The model's own recall is refused (the mod recalled already); its other tools stay.
       const recall = await emit('tool.check', { tool: 'mcp__mnema-memory__recall', input: {} }, async () => ({ decision: 'ask' }));
       expect(recall.decision).toBe('deny');
@@ -1728,20 +1854,108 @@ describe('jev-governor hooks against a fake engine', () => {
       expect((await emit('tool.check', { tool: 'mcp__mnema-memory__search', input: {} }, async () => ({ decision: 'ask' }))).decision).toBe('allow');
     });
 
-    it('a stopped server is started once and asked again; then the memory is left alone for a while', async () => {
+    it('nothing stored: the main chat is told so in a line, and the model may recall itself when the mod could not', async () => {
+      service();
+      await setMemory({ enabled: true });
+      await startSession('mem-empty');
+      sessionTurns = 0;
+      const result = await emit('prompt.submit', { text: 'почини падающую проверку в модуле оплаты' });
+      expect(result.context[0]).toContain('Nothing relevant to this task is stored');
+      // No key: the recall fails, nothing is added, and the model's own recall is not refused.
+      files.delete(`${HOME}/.config/mnema-mcp/config.toml`);
+      await cmd('memory');
+      await startSession('mem-nokey');
+      sessionTurns = 0;
+      const failed = await emit('prompt.submit', { text: 'почини падающую проверку в модуле оплаты' });
+      expect(failed.context).toBeUndefined();
+      expect(ledgerOf('mem-nokey').find((e) => e.kind === 'memory')?.memory).toMatchObject({ ok: false, facts: 0 });
+      expect((await emit('tool.check', { tool: 'mcp__mnema-memory__recall', input: {} }, async () => ({ decision: 'ask' }))).decision).toBe('allow');
+    });
+
+    it('a project that got its git remote later still reads its older memory; a project without a remote is named by its folder', async () => {
+      service();
+      // The folder had no remote before: its memory was the local one.
+      files.set('/work/app/.git/config', '[core]\n\tbare = false\n');
+      await setMemory({ enabled: true });
+      await startSession('mem-local');
+      sessionTurns = 0;
+      await emit('prompt.submit', { text: 'почини падающую проверку в модуле оплаты' });
+      const local = mnemaCalls.map((c) => c.path).find((p) => /\/v1\/users\/repo\.local\.app-[0-9a-f]{8}\/recall/.test(p))!;
+      expect(local).toBeDefined();
+      const localId = local.split('/')[3]!;
+      addFact(localId, 'Fixtures for the payment checks live in fixtures/pay and are regenerated by scripts/fixtures.sh.', ['reference']);
+      // Now the remote exists: the id changes, the old memory is its alias and is still read.
+      files.set('/work/app/.git/config', '[remote "origin"]\n\turl = https://github.com/acme/app.git\n');
+      await cmd('memory');
+      await startSession('mem-remote');
+      sessionTurns = 0;
+      mnemaCalls.length = 0;
+      const result = await emit('prompt.submit', { text: 'почини падающую проверку в модуле оплаты' });
+      expect(mnemaCalls.map((c) => c.path)).toEqual(expect.arrayContaining([`/v1/users/${PROJECT}/recall`, `/v1/users/${localId}/recall`]));
+      expect(result.context[0]).toContain('fixtures/pay');
+      const reg = JSON.parse(files.get(`${DATA}/memory/projects.json`)!);
+      expect(reg.projects).toHaveLength(1);
+      expect(reg.projects[0]).toMatchObject({ id: PROJECT, name: 'app', aliases: [localId], roots: ['/work/app'] });
+    });
+
+    it('a task that names another project gets that project\'s notes, and the two become related; a related project is otherwise read only when Jev says the task needs it', async () => {
+      service();
+      const BILLING = 'repo.github.com.acme.billing';
+      addFact(PROJECT, 'Payments retry through the queue in src/pay/retry.ts', ['decision']);
+      addFact(BILLING, 'The billing service signs webhooks with the key in vault path kv/billing/webhook.', ['reference']);
+      await setMemory({ enabled: true });
+      // The service's list of memories makes the other project known by name (read with a chat's first recall).
+      await cmd('memory');
+      await startSession('mem-rel-0');
+      sessionTurns = 0;
+      await emit('prompt.submit', { text: 'почини падающую проверку в модуле оплаты' });
+      await startSession('mem-rel-1');
+      sessionTurns = 0;
+      const named = await emit('prompt.submit', { text: 'сделай так, чтобы вебхуки приходили в формате, который ждёт billing' });
+      expect(named.context[0]).toContain('Related project billing');
+      expect(named.context[0]).toContain('kv/billing/webhook');
+      expect(ledgerOf('mem-rel-1').find((e) => e.kind === 'memory')?.memory).toMatchObject({ related: 1, relatedProjects: ['billing'] });
+      const reg = JSON.parse(files.get(`${DATA}/memory/projects.json`)!);
+      expect(reg.projects.find((p: any) => p.id === PROJECT).related).toEqual([BILLING]);
+      expect(reg.projects.find((p: any) => p.id === BILLING).related).toEqual([PROJECT]);
+      // Related, not named: Jev decides. Not sure: not read.
+      await startSession('mem-rel-2');
+      sessionTurns = 0;
+      mnemaCalls.length = 0;
+      bodies.length = 0;
+      const plain = await emit('prompt.submit', { text: 'почини падающую проверку в модуле оплаты' });
+      expect(bodies.some((b) => b.includes('rel_0'))).toBe(true);
+      expect(plain.context[0]).not.toContain('Related project');
+      expect(mnemaCalls.some((c) => c.path.includes(BILLING))).toBe(false);
+      // Sure: read.
+      jevRel = 0.9;
+      await startSession('mem-rel-3');
+      sessionTurns = 0;
+      const needed = await emit('prompt.submit', { text: 'почини падающую проверку в модуле оплаты' });
+      expect(needed.context[0]).toContain('Related project billing');
+      // Switched off: never.
+      await setMemory({ related: false });
+      await startSession('mem-rel-4');
+      sessionTurns = 0;
+      const off = await emit('prompt.submit', { text: 'сделай так, чтобы вебхуки приходили в формате, который ждёт billing' });
+      expect(off.context[0]).not.toContain('Related project');
+    });
+
+    it('a stopped service is started once and asked again; then the memory is left alone for a while', async () => {
+      service();
+      addFact(PROJECT, 'Payments retry through the queue in src/pay/retry.ts', ['decision']);
+      await setMemory({ enabled: true });
       await startSession('mem-down');
       sessionTurns = 0;
-      let up = false;
-      mcpReply = async () =>
-        up ? FACTS : { content: [{ type: 'text', text: 'Cannot reach the memory service at http://127.0.0.1:8787: connection refused' }], isError: true };
+      mnemaUp = false;
       processRuns.length = 0;
       const realRun = $.process.run;
       $.process.run = async (argv: string[], init?: { stdin?: string }) => {
-        if (argv.join(' ').includes('mnema-local.sh')) up = true;
+        if (argv.join(' ').includes('mnema-local.sh')) mnemaUp = true;
         return realRun(argv, init);
       };
       try {
-        const result = await emit('prompt.submit', { text: 'почини падающий тест в модуле оплаты' });
+        const result = await emit('prompt.submit', { text: 'почини падающую проверку в модуле оплаты' });
         expect(processRuns.some((a) => a.join(' ').includes('/plugin/scripts/mnema-local.sh start'))).toBe(true);
         expect(result.context?.[0]).toContain('src/pay/retry.ts');
         expect(ledgerOf('mem-down').find((e) => e.memory?.action === 'start')).toMatchObject({ memory: { ok: true } });
@@ -1749,50 +1963,70 @@ describe('jev-governor hooks against a fake engine', () => {
         $.process.run = realRun;
       }
       // Down again, and not restarted within 10 minutes: one failed call, then quiet for a minute.
-      up = false;
-      $.process.run = async (argv: string[], init?: { stdin?: string }) => realRun(argv, init);
+      mnemaUp = false;
       await startSession('mem-down-2');
-      mcpCalls.length = 0;
+      sessionTurns = 0;
       processRuns.length = 0;
-      const failed = await emit('prompt.submit', { text: 'почини падающий тест в модуле оплаты' });
+      const failed = await emit('prompt.submit', { text: 'почини падающую проверку в модуле оплаты' });
       expect(failed.context).toBeUndefined();
       expect(processRuns.some((a) => a.join(' ').includes('mnema-local.sh'))).toBe(false);
-      await startSession('mem-down-3');
-      await emit('prompt.submit', { text: 'почини падающий тест в модуле оплаты' });
-      expect(mcpCalls).toHaveLength(1);
       expect(ledgerOf('mem-down-2').find((e) => e.kind === 'memory')?.memory).toMatchObject({ ok: false, facts: 0 });
-      $.process.run = realRun;
+      await startSession('mem-down-3');
+      sessionTurns = 0;
+      mnemaCalls.length = 0;
+      await emit('prompt.submit', { text: 'почини падающую проверку в модуле оплаты' });
+      expect(mnemaCalls).toHaveLength(0);
+      mnemaUp = true;
+      await cmd('memory');
     });
 
-    it('a subagent with a real task gets the notes appended to its prompt', async () => {
-      mcpReply = async () => FACTS;
-      await emit('command.run', { command: 'jevg', args: 'memory on' }, async () => ({ text: '' }));
+    it('a subagent with a real task gets the project\'s notes appended to its prompt, and nothing at all when there are none', async () => {
+      service();
+      addFact(PROJECT, 'Payments retry through the queue in src/pay/retry.ts', ['decision']);
+      addFact(ME, 'The developer wants answers in Russian and work committed without asking.', ['preference'], { importance: 'high' });
+      await setMemory({ enabled: true });
       await startSession('mem-sub');
-      mcpCalls.length = 0;
+      mnemaCalls.length = 0;
       jevTier = 'standard';
       jevEffortScore = 1;
       let spawned: any;
       const prompt = `Find where payment retries are scheduled and how the backoff is chosen. ${'Look through the services and the queue workers. '.repeat(5)}`;
-      await emit('agent.spawn', { subagentType: 'Explore', description: 'Find payment retries', prompt, parentModel: 'claude-opus-5-5' }, async (x: any) => {
-        spawned = x;
-        return { agentId: 'mem-sub-1', model: x.model ?? x.parentModel };
-      });
-      expect(mcpCalls.some((c) => c.tool === 'recall')).toBe(true);
-      expect(spawned.prompt.startsWith(prompt.trim().slice(0, 40)) || spawned.prompt.includes(prompt.trim().slice(0, 40))).toBe(true);
+      const spawn = async (id: string, p: string, description: string) =>
+        emit('agent.spawn', { subagentType: 'Explore', description, prompt: p, parentModel: 'claude-opus-5-5' }, async (x: any) => {
+          spawned = x;
+          return { agentId: id, model: x.model ?? x.parentModel };
+        });
+      await spawn('mem-sub-1', prompt, 'Find payment retries');
+      expect(mnemaCalls.map((c) => c.path)).toEqual([`/v1/users/${PROJECT}/recall`]);
+      expect(spawned.prompt).toContain(prompt.trim().slice(0, 40));
       expect(spawned.prompt).toContain('src/pay/retry.ts');
+      // The person's notes are the main chat's; a subagent gets the project's facts for its task.
+      expect(spawned.prompt).not.toContain('answers in Russian');
       // A short task asks nothing.
-      mcpCalls.length = 0;
-      await emit('agent.spawn', { subagentType: 'Explore', description: 'ls', prompt: 'List the files.', parentModel: 'claude-opus-5-5' }, async (x: any) => ({ agentId: 'mem-sub-2', model: x.model ?? x.parentModel }));
-      expect(mcpCalls.some((c) => c.tool === 'recall')).toBe(false);
+      mnemaCalls.length = 0;
+      await spawn('mem-sub-2', 'List the files.', 'ls');
+      expect(mnemaCalls).toHaveLength(0);
+      // Nothing stored: no block, not even a line saying so.
+      mnemaFacts.set(PROJECT, []);
+      await spawn('mem-sub-3', prompt, 'Find payment retries');
+      expect(spawned.prompt).not.toContain('<memory');
     });
 
-    it('/jevg memory reports the option and the server, and switches it', async () => {
-      mcpReply = async (tool) => ({ content: [{ type: 'text', text: tool === 'memory_status' ? 'plan pro: 3 of 100000 operations used' : '' }], isError: false });
-      const status = await emit('command.run', { command: 'jevg', args: 'memory' }, async () => ({ text: '' }));
-      expect(status.text).toContain('включена');
-      expect(status.text).toContain('3 of 100000');
-      const off = await emit('command.run', { command: 'jevg', args: 'memory off' }, async () => ({ text: '' }));
-      expect(off.text).toContain('выключена');
+    it('/jevg memory reports the layers and the last recall, checks a task on request, and switches the option', async () => {
+      service();
+      addFact(PROJECT, 'Payments retry through the queue in src/pay/retry.ts', ['decision']);
+      addFact(ME, 'The developer wants answers in Russian and work committed without asking.', ['preference'], { importance: 'high' });
+      await setMemory({ enabled: true });
+      await startSession('mem-cmd');
+      const status = await cmd('memory');
+      expect(status).toContain('включена');
+      expect(status).toContain(`Обо мне (${ME}): фактов 1`);
+      expect(status).toContain(`Проект (${PROJECT}): фактов 1`);
+      const check = await cmd('memory test почини повтор платежей');
+      expect(check).toContain('заметок 2 (обо мне 1, проект 1');
+      expect(check).toContain('src/pay/retry.ts');
+      const off = await cmd('memory off');
+      expect(off).toContain('выключена');
       expect(JSON.parse(files.get(`${DATA}/config.json`)!).memory.enabled).toBe(false);
     });
   });

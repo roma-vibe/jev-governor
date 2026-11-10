@@ -312,7 +312,16 @@ export type GovernorConfig = {
   memory: {
     /** The whole option; off, the mod neither recalls nor saves, and refuses the server's tools (`modelTools`). */
     enabled: boolean;
-    /** The MCP server's name as /mcp lists it (`claude mcp add <name> ...`). */
+    /**
+     * The memory service's address. Empty: `base_url` of the mnema-mcp config file (`keyFile`), else
+     * http://127.0.0.1:8787. The mod speaks to the service directly (lib/mnema.ts), not through MCP.
+     */
+    url: string;
+    /** The file holding the service's key: the mnema-mcp config (`api_key = "…"`) or a file with the bare key. */
+    keyFile: string;
+    /** The person's memory is `dev.<this>`; empty: the login name (as the mnema-mcp server names it). */
+    personal: string;
+    /** The MCP server's name as /mcp lists it (`claude mcp add <name> ...`): the tools the model itself may call. */
     server: string;
     /** Start the local memory server (`startCommand`) when it does not answer; tried at most once in 10 minutes. */
     autoStart: boolean;
@@ -333,9 +342,25 @@ export type GovernorConfig = {
      * facts, usually none. Needs a memory that answers; not in excluded projects or shadow mode.
      */
     autoSave: boolean;
-    /** Reads the dialog (the bulk of the tokens) / checks the few candidates it offers (needs the better judgement). */
+    /** Reads the dialog and offers the facts and the chat's note (Haiku 5.5). */
     autoSaveModel: string;
+    /** Who checks the offered facts: `jev` (one yes/no per fact, kept at `autoSaveKeepAt`) or `model` (`autoSaveCheckModel`); Jev unavailable falls back to the model. */
+    autoSaveCheck: 'jev' | 'model';
+    autoSaveKeepAt: number;
     autoSaveCheckModel: string;
+    /** Each chat keeps one short note in the project's memory (what it did, decided and left open); the next chats on the project read the last few. */
+    sessionNotes: boolean;
+    /** Most notes about the person a prompt gets. */
+    maxPersonal: number;
+    /**
+     * A task that names another project the memory knows, or is in a project related to others,
+     * gets those projects' relevant facts too (at most `relatedMax` projects). A relation is made
+     * when a chat names the other project, or by hand in the UI; with a Jev key, a related project
+     * that the task does not name is read only when Jev is `relatedAt` sure the task needs it.
+     */
+    related: boolean;
+    relatedMax: number;
+    relatedAt: number;
     autoSaveEveryTurns: number;
     autoSaveIdleMinutes: number;
     autoSaveMaxFacts: number;
@@ -590,7 +615,15 @@ export type LedgerEntry = {
    * call refused, the server started). On a `subagent` entry: the recall its prompt got.
    */
   memory?: {
-    action: 'recall' | 'save' | 'start' | 'refuse' | 'extract';
+    action: 'recall' | 'save' | 'start' | 'refuse' | 'extract' | 'note';
+    /** Recall: notes added by layer, and the related projects read. Extract: where the facts went. */
+    personal?: number;
+    project?: number;
+    sessions?: number;
+    related?: number;
+    relatedProjects?: string[];
+    /** The project memory the action used. */
+    memory?: string;
     for?: 'prompt' | 'subagent' | 'handoff' | 'model' | 'turns' | 'idle' | 'manual';
     ok: boolean;
     /** Facts added to the prompt (recall) or saved (extract). */

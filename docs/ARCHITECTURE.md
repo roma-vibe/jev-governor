@@ -202,3 +202,48 @@ it would share with this one is the ledger.
 - `hooks/lib/archive.ts` — pruned calls to files, pointers in the compacted history.
 - `hooks/lib/capsule.ts` — the new-chat capsule: turns, Jev turn selection, rendering, paste prompt.
 - `ui/` — Vue 3 + Tailwind 4 settings UI and its local server.
+
+## Long-term memory (`memory.*`)
+
+```
+hooks/lib/mnema.ts    the Mnema service over HTTP (ids, facts, recall); pure, the caller gives `http`
+hooks/lib/memreg.ts   memory/projects.json: names, folders, older ids, related projects; pure
+hooks/lib/memory.ts   what a recall turns into: the layers and the notes block; pure
+hooks/lib/autosave.ts the reading prompt (Haiku), the candidates, the chat's note, Jev's check; pure
+hooks/register.ts     memoryScope / recallLayers / saveFromDialog: the calls
+ui/lib/memory.ts      the Memory tab's API, on the same client
+```
+
+Two layers. The person's memory is `dev.<login>`; a project's is `repo.<host>.<owner>.<name>` from
+the git remote of the session's root (a worktree's `.git` file is followed to the repository's
+config), a `.mnema-mcp.toml` name, or `repo.local.<folder>-<sha1(path)[:8]>`: exactly the ids the
+mnema-mcp server builds, so the model's own memory tools and the mod meet in the same memories.
+The scope is the session's root, worked out per chat, not the folder the MCP server started in.
+
+Recall for a chat's first task (`recallLayers`, all reads at once, each with its own timeout, one
+failing does not hide the others):
+
+```
+person:   GET facts (pinned / important first)  +  POST recall (what the task brings up)
+project:  POST recall for its id and each older id  +  GET facts (the last chats' notes)
+related:  projects the task names (a mention relates the two), then, by Jev (`rel_<i>` noul),
+          already related ones the task needs  →  POST recall each
+→ <memory> block: About the user / This project / Earlier chats / Related project X
+```
+
+A subagent gets the project's recall for its task only, and no block when it is empty.
+
+Saving (`saveFromDialog`: every N turns, after a quiet stretch, at a handoff, `/jevg memory save`):
+Haiku reads the unread turns with the stored facts of both layers, the names of the other known
+projects and the chat's note so far, and answers `{facts:[{text,type,scope,project?}],session}`.
+Local filters drop progress wording, repeats and secrets; Jev answers `fact_<i>` (noul) per
+candidate (the checking model when Jev is away); a kept fact goes to `dev.…`, to this project, or
+to the named project's memory (not when that memory already holds it). The chat's note is one fact
+tagged `session` + `chat-<id>`, written once and updated in place; a project keeps the notes of
+its last 30 chats.
+
+Not through MCP: `$.mcp.call` runs under the session's permission mode (the auto-mode classifier
+refused the mod's `list_facts`, 128 of 362 readings), passes the mod's own tool hooks, and uses the
+MCP server's idea of the project. From 13 October to 9 November every recall made that way (51
+chats, about 650 subagent tasks) added no fact, while the same recall asked of the service
+directly returned them.
