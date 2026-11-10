@@ -2303,7 +2303,7 @@ function memoryEntry(recalled: Recalled, purpose: 'prompt' | 'subagent'): NonNul
  * The first prompt of a conversation with a real task gets the memory's notes on it as context
  * (once per conversation, within its first turns). Shadow mode asks and logs, adds nothing.
  */
-async function withRecall<E extends { text: string; context?: readonly string[] }>($: EngineInterface, e: E): Promise<E> {
+async function withRecall<E extends { text: string; context?: readonly string[] }>($: EngineInterface, e: E, origin?: string): Promise<E> {
   const m = S.cfg.memory;
   if (!memoryOn() || !m.recallOnStart || S.memory.recalledFor === S.session || e.text.includes(BRIEF_MARKER)) return e;
   const turns = await $.session.turns().catch(() => 0);
@@ -2319,7 +2319,7 @@ async function withRecall<E extends { text: string; context?: readonly string[] 
   S.memory.recalledOk = recalled.error === undefined;
   S.memory.lastRecall = { at: Date.now(), facts: recalled.block?.facts ?? 0, ...(recalled.error ? { error: recalled.error } : {}) };
   const add = recalled.block && !shadow();
-  await ledger($, { kind: 'memory', scope: 'main', applied: !shadow(), text: clip(task, 160), memory: memoryEntry(recalled, 'prompt') });
+  await ledger($, { kind: 'memory', scope: 'main', applied: !shadow(), text: clip(task, 160), memory: { ...memoryEntry(recalled, 'prompt'), ...(origin ? { origin } : {}) } });
   if (add && recalled.block!.facts > 0) {
     $.ui.toast(L(`jev-governor: из памяти добавлено заметок: ${recalled.block!.facts}`, `jev-governor: ${recalled.block!.facts} note(s) recalled from memory`), { timeoutMs: 5000 });
   }
@@ -3203,7 +3203,8 @@ export const register: Register = (on) => {
       await ledger($, { kind: 'error', error: `decide: ${errorText(error)}` });
       return undefined;
     });
-    S.turn = { id: e.turnId, text: e.text, decision, errors: 0, logged: false, steps: 0 };
+    S.turn = { id: e.turnId, text: e.text, decision, errors: 0, logged: false, steps: 0, ...(S.promptOrigin ? { origin: S.promptOrigin } : {}) };
+    S.promptOrigin = undefined;
     return next(e);
   });
 
@@ -3322,6 +3323,7 @@ export const register: Register = (on) => {
         kind: 'turn',
         scope: 'main',
         text: clip(turn.text, 160),
+        ...(turn.origin ? { origin: turn.origin } : {}),
         model,
         prevModel,
         effort,
@@ -3736,7 +3738,12 @@ export const register: Register = (on) => {
     await ensureInit($);
     // /jevg fresh under way: typed now, a prompt would run on the old context and then be wiped by
     // /clear. It waits and goes in after the clear, with the capsule.
-    const typed = e.origin === undefined || e.origin.kind === 'composer' || e.origin.kind === 'bridge';
+    // The person's own message: at a terminal, over Remote Control, or through an SDK host. The Claude
+    // desktop app is one (it runs the engine over stream-json), so what is typed there arrives as `sdk`.
+    const kind = e.origin?.kind;
+    // For the journal: turn.start, which comes next, is not told where its prompt came from.
+    S.promptOrigin = kind;
+    const typed = kind === undefined || kind === 'composer' || kind === 'bridge' || kind === 'sdk';
     if ((S.handoff?.fresh || S.clearing) && typed && !e.text.includes(BRIEF_MARKER) && e.text.trim()) {
       S.held.push(e.text);
       return {
@@ -3754,8 +3761,11 @@ export const register: Register = (on) => {
         $.ui.toast(setup ? L('jev-governor: настройка агентов включена — спрошу про каждого', 'jev-governor: agent setup on — I will ask about every agent') : L('jev-governor: настройка агентов выключена', 'jev-governor: agent setup off'));
       }
     }
-    // The memory's notes go with the first real task of a conversation, typed by the person.
-    const recall = async (x: typeof e) => (typed ? withRecall($, x) : x);
+    // The memory's notes go with the first real task of a conversation: the person's own message, or
+    // a task handed to this session (another session's hand-off or message, a scheduled prompt, a
+    // channel). Not a notification, an observer's report or a plugin's prompt.
+    const tasked = typed || kind === 'coordinator' || kind === 'peer' || kind === 'scheduled-trigger' || kind === 'channel' || kind === 'slack-ping';
+    const recall = async (x: typeof e) => (tasked ? withRecall($, x, kind) : x);
     if (!S.cfg.enabled || !S.cfg.handoff.enabled || !S.data || e.text.includes(BRIEF_MARKER)) return next(await recall(e));
     const ref = CTX_REF.exec(e.text)?.[1];
     const id = ref ?? S.attachNext;

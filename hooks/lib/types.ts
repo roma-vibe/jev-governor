@@ -614,6 +614,8 @@ export type LedgerEntry = {
    * `memory`: a call to the memory server (`for`: the first prompt, a handoff, the model's own
    * call refused, the server started). On a `subagent` entry: the recall its prompt got.
    */
+  /** A main turn: where its prompt came from (the engine's PromptOrigin kind: composer, sdk, coordinator, ...). */
+  origin?: string;
   memory?: {
     action: 'recall' | 'save' | 'start' | 'refuse' | 'extract' | 'note';
     /** Recall: notes added by layer, and the related projects read. Extract: where the facts went. */
@@ -624,6 +626,8 @@ export type LedgerEntry = {
     relatedProjects?: string[];
     /** The project memory the action used. */
     memory?: string;
+    /** Recall for a prompt: where the prompt came from (the engine's PromptOrigin kind: composer, sdk, coordinator, ...). */
+    origin?: string;
     for?: 'prompt' | 'subagent' | 'handoff' | 'model' | 'turns' | 'idle' | 'manual';
     ok: boolean;
     /** Facts added to the prompt (recall) or saved (extract). */

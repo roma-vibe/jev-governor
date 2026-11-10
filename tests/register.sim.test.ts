@@ -1854,6 +1854,24 @@ describe('jev-governor hooks against a fake engine', () => {
       expect((await emit('tool.check', { tool: 'mcp__mnema-memory__search', input: {} }, async () => ({ decision: 'ask' }))).decision).toBe('allow');
     });
 
+    it('recalls for the person\'s message whatever the client (the desktop app sends it as an SDK turn) and for a handed-over task, not for a notification', async () => {
+      service();
+      addFact(PROJECT, 'Payments retry through the queue in src/pay/retry.ts', ['decision']);
+      await setMemory({ enabled: true });
+      const first = async (id: string, kind: string): Promise<any> => {
+        await startSession(id);
+        sessionTurns = 0;
+        return emit('prompt.submit', { text: 'почини падающую проверку в модуле оплаты', origin: { kind } });
+      };
+      expect((await first('mem-o-note', 'task-notification')).context).toBeUndefined();
+      expect((await first('mem-o-plugin', 'plugin')).context).toBeUndefined();
+      for (const kind of ['sdk', 'composer', 'bridge', 'coordinator', 'scheduled-trigger', 'peer']) {
+        const result = await first(`mem-o-${kind}`, kind);
+        expect([kind, result.context?.[0]?.includes('src/pay/retry.ts')]).toEqual([kind, true]);
+        expect(ledgerOf(`mem-o-${kind}`).find((e) => e.kind === 'memory')?.memory).toMatchObject({ origin: kind, project: 1 });
+      }
+    });
+
     it('nothing stored: the main chat is told so in a line, and the model may recall itself when the mod could not', async () => {
       service();
       await setMemory({ enabled: true });

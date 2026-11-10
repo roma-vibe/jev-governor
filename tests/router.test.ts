@@ -338,6 +338,16 @@ describe('a chat\'s own Fable mode (/jevg chat …)', () => {
   });
 });
 
+describe('memory settings written by an older settings page', () => {
+  it('reads the earlier defaults as not chosen, and keeps a value that was set by hand', () => {
+    const old = resolveConfig({ memory: { enabled: true, autoSaveCheckModel: 'claude-sonnet-5-5', maxChars: 2500, maxFacts: 12, timeoutMs: 2500 } }).memory;
+    expect(old).toMatchObject({ enabled: true, autoSaveCheckModel: 'claude-haiku-5-5', maxChars: 3000, maxFacts: 14, timeoutMs: 4000, autoSaveCheck: 'jev', keyFile: '~/.config/mnema-mcp/config.toml' });
+    const own = resolveConfig({ memory: { autoSaveCheckModel: 'claude-opus-5-5', maxChars: 1800, maxFacts: 8, timeoutMs: 6000, personal: 'anna', url: ' http://10.0.0.5:8787 ' } }).memory;
+    expect(own).toMatchObject({ autoSaveCheckModel: 'claude-opus-5-5', maxChars: 1800, maxFacts: 8, timeoutMs: 6000, personal: 'anna', url: 'http://10.0.0.5:8787' });
+    expect(resolveConfig({ memory: { personal: '../x' } }).memory.personal).toBe('');
+  });
+});
+
 describe('modelLabel', () => {
   it('names a model id the way people do', () => {
     expect(modelLabel('claude-fable-5-2')).toBe('Fable 5.2');

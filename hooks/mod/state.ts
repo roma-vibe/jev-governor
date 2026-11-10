@@ -60,6 +60,8 @@ export type MainOutcome = {
 export type TurnState = {
   id: string;
   text: string;
+  /** Where the turn's prompt came from (the engine's PromptOrigin kind), for the journal. */
+  origin?: string;
   decision: Promise<MainOutcome | undefined>;
   /** The most failed tool calls seen within `router.errorWindow` latest results (noteToolResult). */
   errors: number;
@@ -137,6 +139,8 @@ export const S = {
   /** The settings' own `fable` block: `cfg.fable` is this with the chat's choice over it. */
   fileFable: DEFAULT_CONFIG.fable as GovernorConfig['fable'],
   turn: undefined as TurnState | undefined,
+  /** Where the prompt being submitted came from (PromptOrigin kind), until its turn starts. */
+  promptOrigin: undefined as string | undefined,
   /** What each running turn's steps cost so far (`stepKey` → model → totals); see turnUsageParts. */
   stepUsage: new Map<string, Map<string, StepTotals>>(),
   subs: new Map<string, SubState>(),

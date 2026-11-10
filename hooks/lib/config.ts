@@ -432,8 +432,9 @@ export function resolveConfig(raw: unknown): GovernorConfig {
       autoSaveModel: str(me.autoSaveModel, d.memory.autoSaveModel),
       autoSaveCheck: me.autoSaveCheck === 'model' ? 'model' : 'jev',
       autoSaveKeepAt: num(me.autoSaveKeepAt, d.memory.autoSaveKeepAt, 0, 1),
-      // Sonnet named by the earlier default: the check is Jev's now, and Haiku 5.5 stands in when Jev is away.
-      autoSaveCheckModel: str(me.autoSaveCheckModel, d.memory.autoSaveCheckModel),
+      // Sonnet 5.5 was the default until 0.3.16 and the settings page wrote defaults into the file: it is
+      // read as "not chosen". The check is Jev's now, and Haiku 5.5 stands in when Jev is away.
+      autoSaveCheckModel: me.autoSaveCheckModel === 'claude-sonnet-5-5' ? d.memory.autoSaveCheckModel : str(me.autoSaveCheckModel, d.memory.autoSaveCheckModel),
       sessionNotes: bool(me.sessionNotes, d.memory.sessionNotes),
       maxPersonal: Math.round(num(me.maxPersonal, d.memory.maxPersonal, 0, 20)),
       related: bool(me.related, d.memory.related),
@@ -444,9 +445,11 @@ export function resolveConfig(raw: unknown): GovernorConfig {
       autoSaveMaxFacts: num(me.autoSaveMaxFacts, d.memory.autoSaveMaxFacts, 1, 10),
       modelTools: bool(me.modelTools, d.memory.modelTools),
       modelRecall: bool(me.modelRecall, d.memory.modelRecall),
-      maxChars: num(me.maxChars, d.memory.maxChars, 200, 20_000),
-      maxFacts: num(me.maxFacts, d.memory.maxFacts, 1, 50),
-      timeoutMs: num(me.timeoutMs, d.memory.timeoutMs, 200, 30_000),
+      // The earlier defaults (2500 chars, 12 facts, 2.5 s), written into the file by the settings page,
+      // are read as "not chosen" too: two layers and several reads at once need the new ones.
+      maxChars: me.maxChars === 2_500 ? d.memory.maxChars : num(me.maxChars, d.memory.maxChars, 200, 20_000),
+      maxFacts: me.maxFacts === 12 ? d.memory.maxFacts : num(me.maxFacts, d.memory.maxFacts, 1, 50),
+      timeoutMs: me.timeoutMs === 2_500 ? d.memory.timeoutMs : num(me.timeoutMs, d.memory.timeoutMs, 200, 30_000),
     },
     tools: {
       deferIdle: bool(tl.deferIdle, d.tools.deferIdle),
